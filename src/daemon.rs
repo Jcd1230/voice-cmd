@@ -103,6 +103,7 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     let output_config = config.clone();
     tokio::spawn(async move {
         while let Some(text) = text_rx.recv().await {
+            eprintln!("transcribed text: {}", text);
             if let Err(err) = run_output_hook(&text, &output_config).await {
                 eprintln!("output hook error: {err:#}");
             }
@@ -247,8 +248,17 @@ async fn run_output_hook(text: &str, config: &Config) -> Result<()> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(iter);
     cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    cmd.spawn().context("failed to spawn output command")?;
+    let output = cmd.output().await.context("failed to run output command")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        eprintln!(
+            "output hook failed: status={} stdout='{}' stderr='{}'",
+            output.status, stdout.trim(), stderr.trim()
+        );
+    } else if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("output hook stderr: {}", stderr.trim());
+    }
     Ok(())
 }
