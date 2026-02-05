@@ -64,7 +64,7 @@ impl Default for Config {
                 min_speech_ms: 250,
                 max_speech_ms: 10_000,
                 fixed_chunk_ms: None,
-                energy_threshold: 0.02,
+                energy_threshold: 0.002,
             },
             audio: AudioConfig {
                 sample_rate: 16_000,
