@@ -16,7 +16,7 @@ use std::path::PathBuf;
     name = "voicetext",
     version,
     about = "Local voice-to-text daemon and CLI",
-    long_about = "Voicetext is a local voice-to-text daemon for Linux/Wayland.\n\nCommon usage:\n  voicetext daemon         Start the daemon\n  voicetext daemon --fork  Start the daemon in the background\n  voicetext shutdown       Stop the running daemon\n  voicetext toggle         Toggle recording\n  voicetext model fetch    Download the model if missing\n\nConfigure defaults in ~/.config/voicetext/config.toml.\nWhen forking, logs are written to ~/.local/state/voicetext/daemon.log."
+    long_about = "Voicetext is a local voice-to-text daemon for Linux/Wayland.\n\nCommon usage:\n  voicetext daemon         Start the daemon\n  voicetext daemon --fork  Start the daemon in the background\n  voicetext daemon-status  Check if the daemon is running\n  voicetext shutdown       Stop the running daemon\n  voicetext toggle         Toggle recording\n  voicetext model fetch    Download the model if missing\n\nConfigure defaults in ~/.config/voicetext/config.toml.\nWhen forking, logs are written to ~/.local/state/voicetext/daemon.log."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -50,6 +50,11 @@ enum Commands {
     },
     /// Query recording status.
     Status {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Check if the daemon is running and show its status.
+    DaemonStatus {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -150,6 +155,19 @@ async fn main() -> Result<()> {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
             let response = ipc::send_command(&socket_path, "STATUS").await?;
             println!("{response}");
+        }
+        Commands::DaemonStatus { socket } => {
+            let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
+            match ipc::send_command(&socket_path, "STATUS").await {
+                Ok(response) => {
+                    println!("running=true");
+                    println!("{response}");
+                }
+                Err(err) => {
+                    println!("running=false");
+                    println!("error={}", err);
+                }
+            }
         }
         Commands::Send { text, socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
