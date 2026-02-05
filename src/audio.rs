@@ -23,6 +23,7 @@ pub fn start_capture(
     let device = host
         .default_input_device()
         .context("no default input device available")?;
+    let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
 
     let input_config = device
         .default_input_config()
@@ -30,6 +31,13 @@ pub fn start_capture(
 
     let sample_rate = input_config.sample_rate().0 as usize;
     let channels = input_config.channels() as usize;
+    eprintln!(
+        "audio input: device='{}' format={:?} rate={}Hz channels={}",
+        device_name,
+        input_config.sample_format(),
+        sample_rate,
+        channels
+    );
     let frame_size = sample_rate.saturating_mul(config.frame_ms as usize) / 1000;
     let frame_size = frame_size.max(1);
 
