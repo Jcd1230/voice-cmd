@@ -56,7 +56,7 @@ impl Default for Config {
                 quantization: "int8".to_string(),
                 timestamp_granularity: None,
                 download_url: Some(
-                    "https://blob.handy.computer/parakeet-tdt-0.6b-v2-int8.tar.gz".to_string(),
+                    "https://huggingface.co/smcleod/parakeet-tdt-0.6b-v2-int8/resolve/main/parakeet-tdt-0.6b-v2-int8.tar.gz".to_string(),
                 ),
             },
             vad: VadConfig {

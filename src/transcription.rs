@@ -71,6 +71,14 @@ fn ensure_model(cfg: &TranscriptionConfig) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("invalid model path"))?;
     std::fs::create_dir_all(parent).context("failed to create model directory")?;
+    std::fs::create_dir_all(&cfg.model_path).context("failed to create model path")?;
+
+    if model_ready(parent, &cfg.quantization) {
+        move_model_files(parent, &cfg.model_path)?;
+        if model_ready(&cfg.model_path, &cfg.quantization) {
+            return Ok(());
+        }
+    }
 
     eprintln!("model not found, downloading from {url}");
     let response = ureq::get(url)
@@ -81,8 +89,14 @@ fn ensure_model(cfg: &TranscriptionConfig) -> Result<()> {
     std::io::copy(&mut reader, &mut tmp)
         .context("failed to write model archive")?;
 
-    extract_tar_gz(tmp.path(), parent)
-        .with_context(|| format!("failed to extract model archive to {}", parent.display()))?;
+    extract_tar_gz(tmp.path(), &cfg.model_path)
+        .with_context(|| format!("failed to extract model archive to {}", cfg.model_path.display()))?;
+
+    if !model_ready(&cfg.model_path, &cfg.quantization) {
+        if model_ready(parent, &cfg.quantization) {
+            move_model_files(parent, &cfg.model_path)?;
+        }
+    }
 
     if !model_ready(&cfg.model_path, &cfg.quantization) {
         return Err(anyhow!(
@@ -113,6 +127,48 @@ fn model_ready(path: &Path, quantization: &QuantizationType) -> bool {
             path.join("encoder-model.onnx").exists() && path.join("decoder_joint-model.onnx").exists()
         }
     }
+}
+
+fn move_model_files(src: &Path, dest: &Path) -> Result<()> {
+    let files = match quantization_files_for_dir(src) {
+        Some(list) => list,
+        None => return Ok(()),
+    };
+    std::fs::create_dir_all(dest).context("failed to create model directory")?;
+    for filename in files {
+        let from = src.join(filename);
+        if from.exists() {
+            let to = dest.join(filename);
+            std::fs::rename(&from, &to).context("failed to move model file")?;
+        }
+    }
+    Ok(())
+}
+
+fn quantization_files_for_dir(path: &Path) -> Option<Vec<&'static str>> {
+    let has_int8 = path.join("encoder-model.int8.onnx").exists()
+        && path.join("decoder_joint-model.int8.onnx").exists();
+    let has_fp32 = path.join("encoder-model.onnx").exists()
+        && path.join("decoder_joint-model.onnx").exists();
+    if has_int8 {
+        return Some(vec![
+            "encoder-model.int8.onnx",
+            "decoder_joint-model.int8.onnx",
+            "nemo128.onnx",
+            "vocab.txt",
+            "config.json",
+        ]);
+    }
+    if has_fp32 {
+        return Some(vec![
+            "encoder-model.onnx",
+            "decoder_joint-model.onnx",
+            "nemo128.onnx",
+            "vocab.txt",
+            "config.json",
+        ]);
+    }
+    None
 }
 
 fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<()> {
