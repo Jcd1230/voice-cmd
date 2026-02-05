@@ -23,6 +23,10 @@ pub struct Transcriber {
     cfg: TranscriptionConfig,
 }
 
+pub fn fetch_model(cfg: &TranscriptionConfig) -> Result<()> {
+    ensure_model(cfg)
+}
+
 impl Transcriber {
     pub fn new(cfg: TranscriptionConfig) -> Result<Self> {
         ensure_model(&cfg)?;

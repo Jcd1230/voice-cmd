@@ -121,7 +121,7 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     }
 }
 
-fn parse_quantization(value: &str) -> Result<transcribe_rs::engines::parakeet::QuantizationType> {
+pub fn parse_quantization(value: &str) -> Result<transcribe_rs::engines::parakeet::QuantizationType> {
     match value.to_lowercase().as_str() {
         "int8" => Ok(transcribe_rs::engines::parakeet::QuantizationType::Int8),
         "fp32" => Ok(transcribe_rs::engines::parakeet::QuantizationType::FP32),
@@ -129,7 +129,7 @@ fn parse_quantization(value: &str) -> Result<transcribe_rs::engines::parakeet::Q
     }
 }
 
-fn parse_granularity(
+pub fn parse_granularity(
     value: &Option<String>,
 ) -> Result<Option<transcribe_rs::engines::parakeet::TimestampGranularity>> {
     let Some(value) = value.as_ref() else {
