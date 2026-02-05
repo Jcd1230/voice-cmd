@@ -1,0 +1,14 @@
+[tools]
+rust = "stable"
+
+[tasks.build]
+run = "cargo build"
+
+[tasks.run]
+run = "cargo run --"
+
+[tasks.fmt]
+run = "cargo fmt"
+
+[tasks.check]
+run = "cargo check"
