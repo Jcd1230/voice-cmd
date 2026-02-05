@@ -71,12 +71,14 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     let model_path = config.model.path.clone();
     let quantization = parse_quantization(&config.model.quantization)?;
     let timestamp_granularity = parse_granularity(&config.model.timestamp_granularity)?;
+    let download_url = config.model.download_url.clone();
 
     tokio::task::spawn_blocking(move || {
         let mut transcriber = match Transcriber::new(TranscriptionConfig {
             model_path,
             quantization,
             timestamp_granularity,
+            download_url,
         }) {
             Ok(engine) => engine,
             Err(err) => {

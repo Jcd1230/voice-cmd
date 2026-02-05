@@ -1,5 +1,9 @@
-use anyhow::{anyhow, Result};
-use std::path::PathBuf;
+use anyhow::{anyhow, Context, Result};
+use flate2::read::GzDecoder;
+use std::fs::File;
+use std::path::{Path, PathBuf};
+use tar::Archive;
+use tempfile::NamedTempFile;
 use transcribe_rs::engines::parakeet::{
     ParakeetEngine, ParakeetInferenceParams, ParakeetModelParams, QuantizationType,
     TimestampGranularity,
@@ -11,6 +15,7 @@ pub struct TranscriptionConfig {
     pub model_path: PathBuf,
     pub quantization: QuantizationType,
     pub timestamp_granularity: Option<TimestampGranularity>,
+    pub download_url: Option<String>,
 }
 
 pub struct Transcriber {
@@ -20,6 +25,7 @@ pub struct Transcriber {
 
 impl Transcriber {
     pub fn new(cfg: TranscriptionConfig) -> Result<Self> {
+        ensure_model(&cfg)?;
         let mut engine = ParakeetEngine::new();
         let model_params = ParakeetModelParams::quantized(cfg.quantization.clone());
         engine
@@ -48,6 +54,73 @@ impl Transcriber {
 
         Ok(transcription.text)
     }
+}
+
+fn ensure_model(cfg: &TranscriptionConfig) -> Result<()> {
+    if model_ready(&cfg.model_path, &cfg.quantization) {
+        return Ok(());
+    }
+
+    let url = cfg
+        .download_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("model missing and no download_url configured"))?;
+
+    let parent = cfg
+        .model_path
+        .parent()
+        .ok_or_else(|| anyhow!("invalid model path"))?;
+    std::fs::create_dir_all(parent).context("failed to create model directory")?;
+
+    eprintln!("model not found, downloading from {url}");
+    let response = ureq::get(url)
+        .call()
+        .map_err(|err| anyhow!("failed to download model: {err}"))?;
+    let mut tmp = NamedTempFile::new().context("failed to create temp file")?;
+    let mut reader = response.into_reader();
+    std::io::copy(&mut reader, &mut tmp)
+        .context("failed to write model archive")?;
+
+    extract_tar_gz(tmp.path(), parent)
+        .with_context(|| format!("failed to extract model archive to {}", parent.display()))?;
+
+    if !model_ready(&cfg.model_path, &cfg.quantization) {
+        return Err(anyhow!(
+            "model download completed but files are missing at {}",
+            cfg.model_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn model_ready(path: &Path, quantization: &QuantizationType) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+
+    let common = path.join("nemo128.onnx").exists() && path.join("vocab.txt").exists();
+    if !common {
+        return false;
+    }
+
+    match quantization {
+        QuantizationType::Int8 => {
+            path.join("encoder-model.int8.onnx").exists()
+                && path.join("decoder_joint-model.int8.onnx").exists()
+        }
+        QuantizationType::FP32 => {
+            path.join("encoder-model.onnx").exists() && path.join("decoder_joint-model.onnx").exists()
+        }
+    }
+}
+
+fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<()> {
+    let file = File::open(archive_path).context("failed to open archive")?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    archive.unpack(dest).context("failed to unpack archive")?;
+    Ok(())
 }
 
 fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {

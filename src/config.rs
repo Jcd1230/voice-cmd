@@ -19,6 +19,7 @@ pub struct ModelConfig {
     pub path: PathBuf,
     pub quantization: String,
     pub timestamp_granularity: Option<String>,
+    pub download_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,9 +52,12 @@ impl Default for Config {
         Self {
             model: ModelConfig {
                 name: "parakeet-v2".to_string(),
-                path: PathBuf::from("models/parakeet-v2"),
+                path: default_model_path(),
                 quantization: "int8".to_string(),
                 timestamp_granularity: None,
+                download_url: Some(
+                    "https://blob.handy.computer/parakeet-tdt-0.6b-v2-int8.tar.gz".to_string(),
+                ),
             },
             vad: VadConfig {
                 enabled: true,
@@ -72,6 +76,16 @@ impl Default for Config {
             ipc: IpcConfig { socket_path: None },
         }
     }
+}
+
+fn default_model_path() -> PathBuf {
+    if let Some(proj) = ProjectDirs::from("io", "voicetext", "voicetext") {
+        return proj
+            .data_dir()
+            .join("models")
+            .join("parakeet-tdt-0.6b-v2-int8");
+    }
+    PathBuf::from("models/parakeet-tdt-0.6b-v2-int8")
 }
 
 pub fn config_path() -> Result<PathBuf> {
