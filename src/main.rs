@@ -166,6 +166,7 @@ async fn main() -> Result<()> {
                 Err(err) => {
                     println!("running=false");
                     println!("error={}", err);
+                    std::process::exit(1);
                 }
             }
         }
