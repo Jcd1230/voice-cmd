@@ -27,6 +27,25 @@ pub fn fetch_model(cfg: &TranscriptionConfig) -> Result<()> {
     ensure_model(cfg)
 }
 
+pub fn model_status(cfg: &TranscriptionConfig) -> ModelStatus {
+    let ready = model_ready(&cfg.model_path, &cfg.quantization);
+    let fallback_ready = cfg
+        .model_path
+        .parent()
+        .map(|parent| model_ready(parent, &cfg.quantization))
+        .unwrap_or(false);
+    ModelStatus {
+        ready,
+        fallback_ready,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ModelStatus {
+    pub ready: bool,
+    pub fallback_ready: bool,
+}
+
 impl Transcriber {
     pub fn new(cfg: TranscriptionConfig) -> Result<Self> {
         ensure_model(&cfg)?;

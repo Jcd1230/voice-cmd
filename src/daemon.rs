@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, watch};
 
 #[derive(Debug, Default)]
 struct DaemonState {
@@ -35,6 +35,7 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
 
     let state = Arc::new(Mutex::new(DaemonState::default()));
     let recording_flag = Arc::new(AtomicBool::new(false));
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     let (segment_tx, mut segment_rx) = mpsc::unbounded_channel();
@@ -109,16 +110,32 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     });
 
     loop {
-        let (stream, _) = listener.accept().await?;
-        let config = config.clone();
-        let state = Arc::clone(&state);
-        let recording_flag = Arc::clone(&recording_flag);
-        tokio::spawn(async move {
-            if let Err(err) = handle_client(stream, config, state, recording_flag).await {
-                eprintln!("client error: {err:#}");
+        tokio::select! {
+            res = listener.accept() => {
+                let (stream, _) = res?;
+                let config = config.clone();
+                let state = Arc::clone(&state);
+                let recording_flag = Arc::clone(&recording_flag);
+                let shutdown_tx = shutdown_tx.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = handle_client(stream, config, state, recording_flag, shutdown_tx).await {
+                        eprintln!("client error: {err:#}");
+                    }
+                });
             }
-        });
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+        }
     }
+
+    if socket_path.exists() {
+        let _ = tokio::fs::remove_file(&socket_path).await;
+    }
+
+    Ok(())
 }
 
 pub fn parse_quantization(value: &str) -> Result<transcribe_rs::engines::parakeet::QuantizationType> {
@@ -148,12 +165,13 @@ async fn handle_client(
     config: Config,
     state: Arc<Mutex<DaemonState>>,
     recording_flag: Arc<AtomicBool>,
+    shutdown_tx: watch::Sender<bool>,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
     if let Some(line) = lines.next_line().await? {
-        let response = handle_command(line, &config, &state, &recording_flag).await?;
+        let response = handle_command(line, &config, &state, &recording_flag, &shutdown_tx).await?;
         writer.write_all(response.as_bytes()).await?;
     }
     Ok(())
@@ -164,6 +182,7 @@ async fn handle_command(
     config: &Config,
     state: &Arc<Mutex<DaemonState>>,
     recording_flag: &Arc<AtomicBool>,
+    shutdown_tx: &watch::Sender<bool>,
 ) -> Result<String> {
     let trimmed = line.trim();
     if trimmed.eq_ignore_ascii_case("TOGGLE") {
@@ -187,6 +206,10 @@ async fn handle_command(
     if trimmed.eq_ignore_ascii_case("STATUS") {
         let state = state.lock().await;
         return Ok(format!("OK recording={}", state.recording));
+    }
+    if trimmed.eq_ignore_ascii_case("SHUTDOWN") {
+        let _ = shutdown_tx.send(true);
+        return Ok("OK shutting_down=true".to_string());
     }
     if let Some(rest) = trimmed.strip_prefix("TEXT ") {
         run_output_hook(rest, config).await?;

@@ -1983,6 +1983,7 @@ dependencies = [
  "cpal",
  "directories",
  "flate2",
+ "libc",
  "serde",
  "shell-words",
  "tar",
