@@ -1,18 +1,102 @@
 use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
-use gtk4 as gtk;
 use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use gtk4_layer_shell as layer_shell;
 use gtk4_layer_shell::LayerShell;
+
+#[derive(Debug, Clone)]
+struct Args {
+    socket_path: PathBuf,
+    foreground: bool,
+}
 
 fn default_socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir).join("voicetext.sock");
     }
     PathBuf::from("/tmp/voicetext.sock")
+}
+
+fn print_usage() {
+    println!("Usage:");
+    println!("  voicetext-overlay [--fg] [--socket <path>]");
+    println!();
+    println!("Options:");
+    println!("  --fg             Run in foreground (default: daemonized)");
+    println!("  --socket <path>  IPC socket path");
+    println!("  -h, --help       Show this help");
+}
+
+fn parse_args() -> Args {
+    let mut args = std::env::args().skip(1);
+    let mut socket_path = default_socket_path();
+    let mut foreground = false;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--socket" => {
+                if let Some(value) = args.next() {
+                    socket_path = PathBuf::from(value);
+                }
+            }
+            "--fg" => foreground = true,
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+    }
+
+    Args {
+        socket_path,
+        foreground,
+    }
+}
+
+fn daemonize(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let exe = std::env::current_exe()?;
+    let log_path = directories::ProjectDirs::from("io", "voicetext", "voicetext")
+        .and_then(|proj| proj.state_dir().map(|dir| dir.join("overlay.log")))
+        .unwrap_or_else(|| PathBuf::from("/tmp/voicetext-overlay.log"));
+
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("--fg");
+    cmd.arg("--socket");
+    cmd.arg(&args.socket_path);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::from(log_file.try_clone()?));
+    cmd.stderr(Stdio::from(log_file));
+
+    // Start overlay in a detached session so it survives caller exit.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    cmd.spawn()?;
+    println!(
+        "overlay started in background (logs at {})",
+        log_path.display()
+    );
+    Ok(())
 }
 
 fn read_status(socket: &PathBuf) -> bool {
@@ -31,20 +115,7 @@ fn read_status(socket: &PathBuf) -> bool {
     }
 }
 
-fn socket_arg() -> PathBuf {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--socket" {
-            if let Some(value) = args.next() {
-                return PathBuf::from(value);
-            }
-        }
-    }
-    default_socket_path()
-}
-
-fn main() {
-    let socket_path = socket_arg();
+fn run_foreground(socket_path: PathBuf) {
     eprintln!("overlay: starting with socket={}", socket_path.display());
 
     let app = gtk::Application::builder()
@@ -158,5 +229,18 @@ drawingarea.voicetext-overlay {
         });
     });
 
-    app.run();
+    app.run_with_args(&[] as &[&str]);
+}
+
+fn main() {
+    let args = parse_args();
+    if !args.foreground {
+        if let Err(err) = daemonize(&args) {
+            eprintln!("overlay: failed to daemonize: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    run_foreground(args.socket_path);
 }

@@ -12,3 +12,12 @@ run = "cargo fmt"
 
 [tasks.check]
 run = "cargo check"
+
+[tasks.install-local]
+run = "cargo build && mkdir -p ~/.local/bin && cp target/debug/voicetext ~/.local/bin/voicetext.new && mv ~/.local/bin/voicetext.new ~/.local/bin/voicetext"
+
+[tasks.install-overlay]
+run = "cargo build --bin overlay && mkdir -p ~/.local/bin && cp target/debug/overlay ~/.local/bin/voicetext-overlay.new && mv ~/.local/bin/voicetext-overlay.new ~/.local/bin/voicetext-overlay"
+
+[tasks.install-all]
+depends = ["install-local", "install-overlay"]

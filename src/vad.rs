@@ -83,7 +83,7 @@ pub async fn run_segmenter(
             }
         } else if in_speech {
             silence_ms += frame_ms;
-            if silence_ms >= 200 {
+            if silence_ms >= 1000 {
                 if speech_ms >= cfg.min_speech_ms {
                     flush_segment(&mut speech_buffer, speech_ms, &mut on_segment);
                     eprintln!("vad: segment emitted ({} ms)", speech_ms);
