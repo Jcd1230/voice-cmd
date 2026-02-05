@@ -228,6 +228,11 @@ async fn run_output_hook(text: &str, config: &Config) -> Result<()> {
         return Ok(());
     }
 
+    let mut text = text.to_string();
+    if !text.ends_with(char::is_whitespace) {
+        text.push(' ');
+    }
+
     let args = shell_words::split(command).context("failed to parse output command")?;
     if args.is_empty() {
         return Ok(());
@@ -236,14 +241,14 @@ async fn run_output_hook(text: &str, config: &Config) -> Result<()> {
     let mut replaced = false;
     for arg in args.into_iter() {
         if arg.contains("{text}") {
-            final_args.push(arg.replace("{text}", text));
+            final_args.push(arg.replace("{text}", &text));
             replaced = true;
         } else {
             final_args.push(arg);
         }
     }
     if !replaced {
-        final_args.push(text.to_string());
+        final_args.push(text);
     }
 
     let mut iter = final_args.into_iter();
