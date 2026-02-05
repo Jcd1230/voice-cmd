@@ -31,6 +31,7 @@ pub async fn run_segmenter(
     let mut in_speech = false;
     let mut speech_ms: u64 = 0;
     let mut silence_ms: u64 = 0;
+    let mut frame_count: u64 = 0;
 
     while let Some(frame) = rx.recv().await {
         if !recording.load(std::sync::atomic::Ordering::Relaxed) {
@@ -38,17 +39,29 @@ pub async fn run_segmenter(
             speech_buffer.clear();
             speech_ms = 0;
             silence_ms = 0;
+            frame_count = 0;
             continue;
         }
 
         let rms = rms_energy(&frame);
         let frame_ms = cfg.frame_ms as u64;
         let is_speech = if cfg.enabled { rms >= cfg.energy_threshold } else { true };
+        frame_count += 1;
+        if frame_count % 50 == 0 {
+            eprintln!(
+                "vad: rms={:.5} threshold={:.5} is_speech={} buffer_samples={}",
+                rms,
+                cfg.energy_threshold,
+                is_speech,
+                speech_buffer.len()
+            );
+        }
 
         if is_speech {
             if !in_speech {
                 in_speech = true;
                 silence_ms = 0;
+                eprintln!("vad: speech start");
             }
             speech_buffer.extend(frame.iter());
             speech_ms += frame_ms;
@@ -56,6 +69,7 @@ pub async fn run_segmenter(
             if let Some(chunk_ms) = cfg.fixed_chunk_ms {
                 if speech_ms >= chunk_ms {
                     flush_segment(&mut speech_buffer, speech_ms, &mut on_segment);
+                    eprintln!("vad: fixed chunk emitted ({} ms)", speech_ms);
                     speech_ms = 0;
                     in_speech = false;
                 }
@@ -63,6 +77,7 @@ pub async fn run_segmenter(
 
             if speech_ms >= cfg.max_speech_ms {
                 flush_segment(&mut speech_buffer, speech_ms, &mut on_segment);
+                eprintln!("vad: max chunk emitted ({} ms)", speech_ms);
                 speech_ms = 0;
                 in_speech = false;
             }
@@ -71,8 +86,10 @@ pub async fn run_segmenter(
             if silence_ms >= 200 {
                 if speech_ms >= cfg.min_speech_ms {
                     flush_segment(&mut speech_buffer, speech_ms, &mut on_segment);
+                    eprintln!("vad: segment emitted ({} ms)", speech_ms);
                 } else {
                     speech_buffer.clear();
+                    eprintln!("vad: speech too short ({} ms)", speech_ms);
                 }
                 speech_ms = 0;
                 silence_ms = 0;

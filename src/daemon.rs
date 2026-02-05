@@ -190,18 +190,21 @@ async fn handle_command(
         let mut state = state.lock().await;
         state.recording = !state.recording;
         recording_flag.store(state.recording, Ordering::Relaxed);
+        eprintln!("recording toggled: {}", state.recording);
         return Ok(format!("OK recording={}", state.recording));
     }
     if trimmed.eq_ignore_ascii_case("START") {
         let mut state = state.lock().await;
         state.recording = true;
         recording_flag.store(true, Ordering::Relaxed);
+        eprintln!("recording started");
         return Ok("OK recording=true".to_string());
     }
     if trimmed.eq_ignore_ascii_case("STOP") {
         let mut state = state.lock().await;
         state.recording = false;
         recording_flag.store(false, Ordering::Relaxed);
+        eprintln!("recording stopped");
         return Ok("OK recording=false".to_string());
     }
     if trimmed.eq_ignore_ascii_case("STATUS") {
