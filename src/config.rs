@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub model: ModelConfig,
+    #[serde(default)]
     pub vad: VadConfig,
     pub audio: AudioConfig,
     pub output: OutputConfig,
@@ -29,6 +30,33 @@ pub struct VadConfig {
     pub max_speech_ms: u64,
     pub fixed_chunk_ms: Option<u64>,
     pub energy_threshold: f32,
+    #[serde(default = "default_vad_model_path")]
+    pub model_path: PathBuf,
+    #[serde(default = "default_vad_model_url")]
+    pub model_url: Option<String>,
+    #[serde(default = "default_onset_frames")]
+    pub onset_frames: usize,
+    #[serde(default = "default_hangover_frames")]
+    pub hangover_frames: usize,
+    #[serde(default = "default_prefill_frames")]
+    pub prefill_frames: usize,
+}
+
+impl Default for VadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_speech_ms: 250,
+            max_speech_ms: 10_000,
+            fixed_chunk_ms: None,
+            energy_threshold: 0.002,
+            model_path: default_vad_model_path(),
+            model_url: default_vad_model_url(),
+            onset_frames: default_onset_frames(),
+            hangover_frames: default_hangover_frames(),
+            prefill_frames: default_prefill_frames(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,13 +87,7 @@ impl Default for Config {
                     "https://huggingface.co/smcleod/parakeet-tdt-0.6b-v2-int8/resolve/main/parakeet-tdt-0.6b-v2-int8.tar.gz".to_string(),
                 ),
             },
-            vad: VadConfig {
-                enabled: true,
-                min_speech_ms: 250,
-                max_speech_ms: 10_000,
-                fixed_chunk_ms: None,
-                energy_threshold: 0.002,
-            },
+            vad: VadConfig::default(),
             audio: AudioConfig {
                 sample_rate: 16_000,
                 frame_ms: 30,
@@ -86,6 +108,29 @@ fn default_model_path() -> PathBuf {
             .join("parakeet-tdt-0.6b-v2-int8");
     }
     PathBuf::from("models/parakeet-tdt-0.6b-v2-int8")
+}
+
+fn default_vad_model_path() -> PathBuf {
+    if let Some(proj) = ProjectDirs::from("io", "voicetext", "voicetext") {
+        return proj.data_dir().join("models").join("silero_vad_v4.onnx");
+    }
+    PathBuf::from("models/silero_vad_v4.onnx")
+}
+
+fn default_vad_model_url() -> Option<String> {
+    Some("https://blob.handy.computer/silero_vad_v4.onnx".to_string())
+}
+
+fn default_onset_frames() -> usize {
+    2
+}
+
+fn default_hangover_frames() -> usize {
+    10
+}
+
+fn default_prefill_frames() -> usize {
+    5
 }
 
 pub fn config_path() -> Result<PathBuf> {

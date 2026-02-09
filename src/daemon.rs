@@ -54,6 +54,11 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
         max_speech_ms: config.vad.max_speech_ms,
         fixed_chunk_ms: config.vad.fixed_chunk_ms,
         energy_threshold: config.vad.energy_threshold,
+        model_path: config.vad.model_path.clone(),
+        model_url: config.vad.model_url.clone(),
+        onset_frames: config.vad.onset_frames,
+        hangover_frames: config.vad.hangover_frames,
+        prefill_frames: config.vad.prefill_frames,
         sample_rate: audio_info.sample_rate,
         frame_ms: config.audio.frame_ms,
     };
