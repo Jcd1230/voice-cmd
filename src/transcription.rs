@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use flate2::read::GzDecoder;
+use rubato::{FftFixedIn, Resampler};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tar::Archive;
@@ -59,7 +60,7 @@ impl Transcriber {
 
     pub fn transcribe_segment(&mut self, samples: &[f32], sample_rate: u32) -> Result<String> {
         let resampled = if sample_rate != 16_000 {
-            resample_linear(samples, sample_rate, 16_000)
+            resample_rubato(samples, sample_rate, 16_000)?
         } else {
             samples.to_vec()
         };
@@ -202,22 +203,40 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
+fn resample_rubato(samples: &[f32], src_rate: u32, dst_rate: u32) -> Result<Vec<f32>> {
     if samples.is_empty() || src_rate == 0 || dst_rate == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let ratio = dst_rate as f64 / src_rate as f64;
-    let dst_len = ((samples.len() as f64) * ratio).round() as usize;
-    let mut out = Vec::with_capacity(dst_len);
-    for i in 0..dst_len {
-        let src_pos = (i as f64) / ratio;
-        let idx = src_pos.floor() as usize;
-        let frac = (src_pos - idx as f64) as f32;
-        let s0 = samples.get(idx).copied().unwrap_or(0.0);
-        let s1 = samples.get(idx + 1).copied().unwrap_or(s0);
-        out.push(s0 + (s1 - s0) * frac);
+
+    const CHUNK_IN: usize = 1024;
+    let mut resampler =
+        FftFixedIn::<f32>::new(src_rate as usize, dst_rate as usize, CHUNK_IN, 1, 1)
+            .map_err(|err| anyhow!("failed to create resampler: {err}"))?;
+
+    let mut out = Vec::<f32>::new();
+    let mut i = 0usize;
+    while i < samples.len() {
+        let end = (i + CHUNK_IN).min(samples.len());
+        let mut chunk = samples[i..end].to_vec();
+        if chunk.len() < CHUNK_IN {
+            chunk.resize(CHUNK_IN, 0.0);
+        }
+
+        let processed = resampler
+            .process(&[&chunk], None)
+            .map_err(|err| anyhow!("resampling failed: {err}"))?;
+        out.extend_from_slice(&processed[0]);
+        i = end;
     }
-    out
+
+    let expected_len = ((samples.len() as f64) * (dst_rate as f64 / src_rate as f64)).round() as usize;
+    if out.len() > expected_len {
+        out.truncate(expected_len);
+    } else if out.len() < expected_len {
+        out.resize(expected_len, 0.0);
+    }
+
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -225,9 +244,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resample_linear_scales_length() {
+    fn resample_rubato_scales_length() {
         let input = vec![0.0_f32; 16000];
-        let out = resample_linear(&input, 16_000, 8_000);
+        let out = resample_rubato(&input, 16_000, 8_000).unwrap();
         assert!((out.len() as i32 - 8000).abs() <= 1);
     }
 }

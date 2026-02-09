@@ -21,3 +21,4 @@ ureq = "2.12"
 gtk4 = "0.8"
 gtk4-layer-shell = "0.3"
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
+rubato = "0.16"
