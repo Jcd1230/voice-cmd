@@ -332,15 +332,19 @@ fn builtin_tone_samples() -> &'static [f32] {
     static TONE: OnceLock<Vec<f32>> = OnceLock::new();
     TONE.get_or_init(|| {
         let sample_rate = 48_000_u32;
-        let duration_secs = 0.09_f32;
+        let duration_secs = 0.16_f32;
         let total_samples = (sample_rate as f32 * duration_secs) as usize;
-        let fade_samples = (sample_rate as f32 * 0.015) as usize;
-        let freq = 880.0_f32;
+        let fade_samples = (sample_rate as f32 * 0.02) as usize;
+        let start_freq = 700.0_f32;
+        let end_freq = 980.0_f32;
         let amp = 0.10_f32;
 
         let mut data = Vec::with_capacity(total_samples);
+        let mut phase = 0.0_f32;
         for i in 0..total_samples {
-            let t = i as f32 / sample_rate as f32;
+            let progress = i as f32 / total_samples.max(1) as f32;
+            let freq = start_freq + (end_freq - start_freq) * progress;
+            phase += 2.0 * std::f32::consts::PI * freq / sample_rate as f32;
             let mut env = 1.0_f32;
             if i < fade_samples {
                 env = i as f32 / fade_samples as f32;
@@ -348,7 +352,7 @@ fn builtin_tone_samples() -> &'static [f32] {
                 let tail = total_samples.saturating_sub(i);
                 env = tail as f32 / fade_samples as f32;
             }
-            let sample = (2.0 * std::f32::consts::PI * freq * t).sin() * amp * env.clamp(0.0, 1.0);
+            let sample = phase.sin() * amp * env.clamp(0.0, 1.0);
             data.push(sample);
         }
         data
