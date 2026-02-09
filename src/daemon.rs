@@ -109,6 +109,9 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     tokio::spawn(async move {
         while let Some(text) = text_rx.recv().await {
             eprintln!("transcribed text: {}", text);
+            if let Err(err) = run_sound_hook(&output_config).await {
+                eprintln!("sound hook error: {err:#}");
+            }
             if let Err(err) = run_output_hook(&text, &output_config).await {
                 eprintln!("output hook error: {err:#}");
             }
@@ -272,6 +275,39 @@ async fn run_output_hook(text: &str, config: &Config) -> Result<()> {
     } else if !output.stderr.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!("output hook stderr: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+async fn run_sound_hook(config: &Config) -> Result<()> {
+    if !config.sound.enabled {
+        return Ok(());
+    }
+    let command = config.sound.command.trim();
+    if command.is_empty() {
+        return Ok(());
+    }
+
+    let args = shell_words::split(command).context("failed to parse sound command")?;
+    if args.is_empty() {
+        return Ok(());
+    }
+
+    let mut iter = args.into_iter();
+    let program = iter.next().context("missing sound command")?;
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(iter);
+    cmd.stdin(Stdio::null());
+    let output = cmd.output().await.context("failed to run sound command")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        eprintln!(
+            "sound hook failed: status={} stdout='{}' stderr='{}'",
+            output.status,
+            stdout.trim(),
+            stderr.trim()
+        );
     }
     Ok(())
 }

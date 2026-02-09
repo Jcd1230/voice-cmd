@@ -11,6 +11,7 @@ pub struct Config {
     pub vad: VadConfig,
     pub audio: AudioConfig,
     pub output: OutputConfig,
+    pub sound: SoundConfig,
     pub ipc: IpcConfig,
 }
 
@@ -49,7 +50,7 @@ impl Default for VadConfig {
             min_speech_ms: 250,
             max_speech_ms: 10_000,
             fixed_chunk_ms: None,
-            energy_threshold: 0.002,
+            energy_threshold: 0.5,
             model_path: default_vad_model_path(),
             model_url: default_vad_model_url(),
             onset_frames: default_onset_frames(),
@@ -67,6 +68,14 @@ pub struct AudioConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_sound_command")]
     pub command: String,
 }
 
@@ -94,6 +103,10 @@ impl Default for Config {
             },
             output: OutputConfig {
                 command: "ydotool type --key-delay 2 {text}".to_string(),
+            },
+            sound: SoundConfig {
+                enabled: true,
+                command: "canberra-gtk-play -i bell -d voicetext".to_string(),
             },
             ipc: IpcConfig { socket_path: None },
         }
@@ -131,6 +144,14 @@ fn default_hangover_frames() -> usize {
 
 fn default_prefill_frames() -> usize {
     5
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sound_command() -> String {
+    "canberra-gtk-play -i bell -d voicetext".to_string()
 }
 
 pub fn config_path() -> Result<PathBuf> {
