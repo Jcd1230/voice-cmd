@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -165,7 +166,7 @@ async fn main() -> Result<()> {
         }
         Commands::Toggle { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, "TOGGLE").await?;
+            let response = send_toggle_with_autostart(&socket_path).await?;
             println!("{response}");
         }
         Commands::Start { socket } => {
@@ -258,6 +259,46 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn send_toggle_with_autostart(socket_path: &PathBuf) -> Result<String> {
+    match ipc::send_command(socket_path, "TOGGLE").await {
+        Ok(response) => return Ok(response),
+        Err(err) => {
+            eprintln!(
+                "toggle: daemon not reachable at {} ({err}); starting daemon",
+                socket_path.display()
+            );
+        }
+    }
+
+    start_daemon_in_background(socket_path)?;
+
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Ok(response) = ipc::send_command(socket_path, "TOGGLE").await {
+            return Ok(response);
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "failed to toggle after starting daemon at {}",
+        socket_path.display()
+    ))
+}
+
+fn start_daemon_in_background(socket_path: &PathBuf) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("daemon");
+    cmd.arg("--fork");
+    cmd.arg("--socket");
+    cmd.arg(socket_path);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    cmd.spawn().context("failed to start daemon in background")?;
+    Ok(())
+}
+
 fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
     let mut candidates = Vec::<PathBuf>::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -269,6 +310,7 @@ fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
 
     for candidate in candidates {
         let mut cmd = std::process::Command::new(&candidate);
+        cmd.arg("--fg");
         cmd.arg("--socket");
         cmd.arg(socket_path);
         cmd.stdin(std::process::Stdio::null());
