@@ -149,7 +149,7 @@ fn default_onset_frames() -> usize {
 }
 
 fn default_hangover_frames() -> usize {
-    10
+    20
 }
 
 fn default_prefill_frames() -> usize {
