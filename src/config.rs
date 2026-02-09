@@ -106,7 +106,7 @@ impl Default for Config {
             },
             sound: SoundConfig {
                 enabled: true,
-                command: "canberra-gtk-play -i bell -d voicetext".to_string(),
+                command: String::new(),
             },
             ipc: IpcConfig { socket_path: None },
         }
@@ -151,7 +151,7 @@ fn default_true() -> bool {
 }
 
 fn default_sound_command() -> String {
-    "canberra-gtk-play -i bell -d voicetext".to_string()
+    String::new()
 }
 
 pub fn config_path() -> Result<PathBuf> {

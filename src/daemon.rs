@@ -4,6 +4,7 @@ use crate::transcription::{Transcriber, TranscriptionConfig};
 use crate::vad::{self, VadConfig};
 use anyhow::{Context, Result};
 use cpal::traits::StreamTrait;
+use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use shell_words;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -285,7 +286,9 @@ async fn run_sound_hook(config: &Config) -> Result<()> {
     }
     let command = config.sound.command.trim();
     if command.is_empty() {
-        return Ok(());
+        return tokio::task::spawn_blocking(play_builtin_tone)
+            .await
+            .context("failed to join builtin tone task")?;
     }
 
     let args = shell_words::split(command).context("failed to parse sound command")?;
@@ -309,5 +312,38 @@ async fn run_sound_hook(config: &Config) -> Result<()> {
             stderr.trim()
         );
     }
+    Ok(())
+}
+
+fn play_builtin_tone() -> Result<()> {
+    let (_stream, handle) = OutputStream::try_default()
+        .map_err(|err| anyhow::anyhow!("failed to open default output stream: {err}"))?;
+    let sink = Sink::try_new(&handle)
+        .map_err(|err| anyhow::anyhow!("failed to create sink: {err}"))?;
+
+    let sample_rate = 48_000_u32;
+    let duration_secs = 0.09_f32;
+    let total_samples = (sample_rate as f32 * duration_secs) as usize;
+    let fade_samples = (sample_rate as f32 * 0.015) as usize;
+    let freq = 880.0_f32;
+    let amp = 0.10_f32;
+
+    let mut data = Vec::with_capacity(total_samples);
+    for i in 0..total_samples {
+        let t = i as f32 / sample_rate as f32;
+        let mut env = 1.0_f32;
+        if i < fade_samples {
+            env = i as f32 / fade_samples as f32;
+        } else if i > total_samples.saturating_sub(fade_samples) {
+            let tail = total_samples.saturating_sub(i);
+            env = tail as f32 / fade_samples as f32;
+        }
+        let sample = (2.0 * std::f32::consts::PI * freq * t).sin() * amp * env.clamp(0.0, 1.0);
+        data.push(sample);
+    }
+
+    let source = SamplesBuffer::new(1, sample_rate, data);
+    sink.append(source);
+    sink.sleep_until_end();
     Ok(())
 }
