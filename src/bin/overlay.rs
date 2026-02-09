@@ -24,13 +24,15 @@ fn default_socket_path() -> PathBuf {
 }
 
 fn print_usage() {
-    println!("Usage:");
-    println!("  voicetext-overlay [--fg] [--socket <path>]");
-    println!();
-    println!("Options:");
-    println!("  --fg             Run in foreground (default: daemonized)");
-    println!("  --socket <path>  IPC socket path");
-    println!("  -h, --help       Show this help");
+    println!(
+        r#"Usage:
+  voicetext-overlay [--fg] [--socket <path>]
+
+Options:
+  --fg             Run in foreground (default: daemonized)
+  --socket <path>  IPC socket path
+  -h, --help       Show this help"#
+    );
 }
 
 fn parse_args() -> Args {
@@ -127,7 +129,7 @@ fn run_foreground(socket_path: PathBuf) {
         if let Some(display) = gtk::gdk::Display::default() {
             let provider = gtk::CssProvider::new();
             provider.load_from_data(
-                "
+                r#"
 window.voicetext-overlay {
   background-color: transparent;
   box-shadow: none;
@@ -138,7 +140,7 @@ box.voicetext-overlay {
 drawingarea.voicetext-overlay {
   background-color: transparent;
 }
-",
+"#,
             );
             gtk::style_context_add_provider_for_display(
                 &display,

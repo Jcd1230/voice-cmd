@@ -16,7 +16,19 @@ use std::path::PathBuf;
     name = "voicetext",
     version,
     about = "Local voice-to-text daemon and CLI",
-    long_about = "Voicetext is a local voice-to-text daemon for Linux/Wayland.\n\nCommon usage:\n  voicetext daemon         Start the daemon\n  voicetext daemon --fork  Start the daemon in the background\n  voicetext daemon-status  Check if the daemon is running\n  voicetext shutdown       Stop the running daemon\n  voicetext toggle         Toggle recording\n  voicetext model fetch    Download the model if missing\n\nConfigure defaults in ~/.config/voicetext/config.toml.\nWhen forking, logs are written to ~/.local/state/voicetext/daemon.log."
+    long_about = r#"Voicetext is a local voice-to-text daemon for Linux/Wayland.
+
+Common usage:
+  voicetext daemon         Start the daemon (auto-starts overlay)
+  voicetext daemon --fork  Start the daemon in the background
+  voicetext daemon --no-overlay  Start daemon without overlay
+  voicetext daemon-status  Check if the daemon is running
+  voicetext shutdown       Stop the running daemon
+  voicetext toggle         Toggle recording
+  voicetext model fetch    Download the model if missing
+
+Configure defaults in ~/.config/voicetext/config.toml.
+When forking, logs are written to ~/.local/state/voicetext/daemon.log."#
 )]
 struct Cli {
     #[command(subcommand)]
@@ -30,6 +42,9 @@ enum Commands {
         /// Fork the daemon into the background.
         #[arg(long)]
         fork: bool,
+        /// Do not auto-launch the overlay process.
+        #[arg(long)]
+        no_overlay: bool,
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -94,7 +109,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Daemon { socket, fork } => {
+        Commands::Daemon {
+            socket,
+            fork,
+            no_overlay,
+        } => {
             let path = config::config_path()?;
             let config = config::load_config(&path)?;
             let socket_path = socket
@@ -116,6 +135,9 @@ async fn main() -> Result<()> {
                     .with_context(|| format!("failed to open log file at {}", log_path.display()))?;
                 let mut cmd = std::process::Command::new(exe);
                 cmd.arg("daemon");
+                if no_overlay {
+                    cmd.arg("--no-overlay");
+                }
                 cmd.arg("--socket");
                 cmd.arg(&socket_path);
                 cmd.stdin(std::process::Stdio::null());
@@ -133,6 +155,11 @@ async fn main() -> Result<()> {
                     log_path.display()
                 );
                 return Ok(());
+            }
+            if !no_overlay {
+                if let Err(err) = spawn_overlay(&socket_path) {
+                    eprintln!("warning: failed to launch overlay: {err}");
+                }
             }
             daemon::run(config, socket_path).await?;
         }
@@ -229,4 +256,29 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
+    let mut candidates = Vec::<PathBuf>::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("overlay"));
+        }
+    }
+    candidates.push(PathBuf::from("voicetext-overlay"));
+
+    for candidate in candidates {
+        let mut cmd = std::process::Command::new(&candidate);
+        cmd.arg("--socket");
+        cmd.arg(socket_path);
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        match cmd.spawn() {
+            Ok(_) => return Ok(()),
+            Err(_) => continue,
+        }
+    }
+
+    Err(anyhow::anyhow!("could not find an overlay executable"))
 }
