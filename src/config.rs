@@ -11,6 +11,7 @@ pub struct Config {
     pub vad: VadConfig,
     pub audio: AudioConfig,
     pub output: OutputConfig,
+    #[serde(default)]
     pub sound: SoundConfig,
     pub ipc: IpcConfig,
 }
@@ -77,6 +78,15 @@ pub struct SoundConfig {
     pub enabled: bool,
     #[serde(default = "default_sound_command")]
     pub command: String,
+}
+
+impl Default for SoundConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            command: default_sound_command(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
