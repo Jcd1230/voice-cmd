@@ -5,9 +5,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub fn default_socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("voicetext.sock");
+        return PathBuf::from(dir).join("voice-cmd.sock");
     }
-    PathBuf::from("/tmp/voicetext.sock")
+    PathBuf::from("/tmp/voice-cmd.sock")
 }
 
 pub async fn send_command(socket: &Path, command: &str) -> Result<String> {

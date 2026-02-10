@@ -18,15 +18,15 @@ struct Args {
 
 fn default_socket_path() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("voicetext.sock");
+        return PathBuf::from(dir).join("voice-cmd.sock");
     }
-    PathBuf::from("/tmp/voicetext.sock")
+    PathBuf::from("/tmp/voice-cmd.sock")
 }
 
 fn print_usage() {
     println!(
         r#"Usage:
-  voicetext-overlay [--fg] [--socket <path>]
+  voice-cmd-overlay [--fg] [--socket <path>]
 
 Options:
   --fg             Run in foreground (default: daemonized)
@@ -64,9 +64,9 @@ fn parse_args() -> Args {
 
 fn daemonize(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
-    let log_path = directories::ProjectDirs::from("io", "voicetext", "voicetext")
+    let log_path = directories::ProjectDirs::from("io", "voice-cmd", "voice-cmd")
         .and_then(|proj| proj.state_dir().map(|dir| dir.join("overlay.log")))
-        .unwrap_or_else(|| PathBuf::from("/tmp/voicetext-overlay.log"));
+        .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-overlay.log"));
 
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -121,7 +121,7 @@ fn run_foreground(socket_path: PathBuf) {
     eprintln!("overlay: starting with socket={}", socket_path.display());
 
     let app = gtk::Application::builder()
-        .application_id("io.voicetext.overlay")
+        .application_id("io.voice_cmd.overlay")
         .build();
 
     app.connect_activate(move |app| {
@@ -130,14 +130,14 @@ fn run_foreground(socket_path: PathBuf) {
             let provider = gtk::CssProvider::new();
             provider.load_from_data(
                 r#"
-window.voicetext-overlay {
+window.voice-cmd-overlay {
   background-color: transparent;
   box-shadow: none;
 }
-box.voicetext-overlay {
+box.voice-cmd-overlay {
   background-color: transparent;
 }
-drawingarea.voicetext-overlay {
+drawingarea.voice-cmd-overlay {
   background-color: transparent;
 }
 "#,
@@ -151,11 +151,11 @@ drawingarea.voicetext-overlay {
 
         let window = gtk::ApplicationWindow::builder()
             .application(app)
-            .title("Voicetext Overlay")
+            .title("Voice Cmd Overlay")
             .decorated(false)
             .resizable(false)
             .build();
-        window.add_css_class("voicetext-overlay");
+        window.add_css_class("voice-cmd-overlay");
 
         if !layer_shell::is_supported() {
             eprintln!("overlay: gtk4-layer-shell not supported by compositor/session");
@@ -174,14 +174,14 @@ drawingarea.voicetext-overlay {
         window.set_keyboard_mode(layer_shell::KeyboardMode::None);
 
         let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        container.add_css_class("voicetext-overlay");
+        container.add_css_class("voice-cmd-overlay");
         container.set_halign(gtk::Align::Center);
         container.set_valign(gtk::Align::Start);
         container.set_hexpand(true);
         container.set_vexpand(false);
 
         let circle = gtk::DrawingArea::new();
-        circle.add_css_class("voicetext-overlay");
+        circle.add_css_class("voice-cmd-overlay");
         circle.set_content_width(48);
         circle.set_content_height(48);
         circle.set_draw_func(|_, cr, width, height| {

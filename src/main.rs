@@ -14,22 +14,22 @@ use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "voicetext",
+    name = "voice-cmd",
     version,
     about = "Local voice-to-text daemon and CLI",
-    long_about = r#"Voicetext is a local voice-to-text daemon for Linux/Wayland.
+    long_about = r#"Voice-cmd is a local voice-to-text daemon for Linux/Wayland.
 
 Common usage:
-  voicetext daemon         Start the daemon (auto-starts overlay)
-  voicetext daemon --fork  Start the daemon in the background
-  voicetext daemon --no-overlay  Start daemon without overlay
-  voicetext daemon-status  Check if the daemon is running
-  voicetext shutdown       Stop the running daemon
-  voicetext toggle         Toggle recording
-  voicetext model fetch    Download the model if missing
+  voice-cmd daemon         Start the daemon (auto-starts overlay)
+  voice-cmd daemon --fork  Start the daemon in the background
+  voice-cmd daemon --no-overlay  Start daemon without overlay
+  voice-cmd daemon-status  Check if the daemon is running
+  voice-cmd shutdown       Stop the running daemon
+  voice-cmd toggle         Toggle recording
+  voice-cmd model fetch    Download the model if missing
 
-Configure defaults in ~/.config/voicetext/config.toml.
-When forking, logs are written to ~/.local/state/voicetext/daemon.log."#
+Configure defaults in ~/.config/voice-cmd/config.toml.
+When forking, logs are written to ~/.local/state/voice-cmd/daemon.log."#
 )]
 struct Cli {
     #[command(subcommand)]
@@ -122,9 +122,9 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(ipc::default_socket_path);
             if fork {
                 let exe = std::env::current_exe()?;
-                let log_path = ProjectDirs::from("io", "voicetext", "voicetext")
+                let log_path = ProjectDirs::from("io", "voice-cmd", "voice-cmd")
                     .and_then(|proj| proj.state_dir().map(|dir| dir.join("daemon.log")))
-                    .unwrap_or_else(|| PathBuf::from("/tmp/voicetext-daemon.log"));
+                    .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-daemon.log"));
                 if let Some(parent) = log_path.parent() {
                     std::fs::create_dir_all(parent)
                         .context("failed to create log directory")?;
@@ -303,10 +303,10 @@ fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
     let mut candidates = Vec::<PathBuf>::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            candidates.push(parent.join("overlay"));
+            candidates.push(parent.join("voice-cmd-overlay"));
         }
     }
-    candidates.push(PathBuf::from("voicetext-overlay"));
+    candidates.push(PathBuf::from("voice-cmd-overlay"));
 
     for candidate in candidates {
         let mut cmd = std::process::Command::new(&candidate);

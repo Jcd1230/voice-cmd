@@ -1,7 +1,11 @@
 [package]
-name = "voicetext"
+name = "voice-cmd"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "voice-cmd-overlay"
+path = "src/bin/overlay.rs"
 
 [dependencies]
 anyhow = "1.0"

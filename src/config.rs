@@ -124,7 +124,7 @@ impl Default for Config {
 }
 
 fn default_model_path() -> PathBuf {
-    if let Some(proj) = ProjectDirs::from("io", "voicetext", "voicetext") {
+    if let Some(proj) = ProjectDirs::from("io", "voice-cmd", "voice-cmd") {
         return proj
             .data_dir()
             .join("models")
@@ -134,7 +134,7 @@ fn default_model_path() -> PathBuf {
 }
 
 fn default_vad_model_path() -> PathBuf {
-    if let Some(proj) = ProjectDirs::from("io", "voicetext", "voicetext") {
+    if let Some(proj) = ProjectDirs::from("io", "voice-cmd", "voice-cmd") {
         return proj.data_dir().join("models").join("silero_vad_v4.onnx");
     }
     PathBuf::from("models/silero_vad_v4.onnx")
@@ -165,7 +165,7 @@ fn default_sound_command() -> String {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    let proj = ProjectDirs::from("io", "voicetext", "voicetext")
+    let proj = ProjectDirs::from("io", "voice-cmd", "voice-cmd")
         .context("failed to resolve config directory")?;
     Ok(proj.config_dir().join("config.toml"))
 }
