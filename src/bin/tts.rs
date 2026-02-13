@@ -51,6 +51,10 @@ struct Cli {
     #[arg(long)]
     voice: Option<String>,
 
+    /// Piper voice preset (embedded piper backend only).
+    #[arg(long, value_enum, default_value_t = PiperPreset::Masculine)]
+    piper_preset: PiperPreset,
+
     /// Override config path.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -74,6 +78,13 @@ enum Engine {
 enum OutputMode {
     Pipewire,
     File,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PiperPreset {
+    Masculine,
+    Natural,
+    Crisp,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -503,9 +514,10 @@ fn run_backend(
     cfg: &TtsBackendConfig,
     text: &str,
     output_wav: &Path,
+    piper_preset: PiperPreset,
 ) -> Result<()> {
     if matches!(engine, Engine::Piper) && should_use_builtin_piper(cfg.command.trim()) {
-        return run_backend_embedded_piper(cfg, text, output_wav);
+        return run_backend_embedded_piper(cfg, text, output_wav, piper_preset);
     }
     if matches!(engine, Engine::Kokoro) && should_use_builtin_kokoro(cfg.command.trim()) {
         return run_backend_builtin_kokoro(cfg, text, output_wav);
@@ -609,7 +621,12 @@ fn should_use_builtin_kokoro(command: &str) -> bool {
     command.is_empty()
 }
 
-fn run_backend_embedded_piper(cfg: &TtsBackendConfig, text: &str, output_wav: &Path) -> Result<()> {
+fn run_backend_embedded_piper(
+    cfg: &TtsBackendConfig,
+    text: &str,
+    output_wav: &Path,
+    preset: PiperPreset,
+) -> Result<()> {
     let model_path = cfg
         .model_path
         .as_ref()
@@ -621,6 +638,13 @@ fn run_backend_embedded_piper(cfg: &TtsBackendConfig, text: &str, output_wav: &P
     cmd.arg(model_path);
     cmd.arg("--output_file");
     cmd.arg(output_wav);
+    let (length_scale, noise_scale, noise_w) = piper_preset_values(preset);
+    cmd.arg("--length_scale");
+    cmd.arg(format!("{length_scale:.3}"));
+    cmd.arg("--noise_scale");
+    cmd.arg(format!("{noise_scale:.3}"));
+    cmd.arg("--noise_w");
+    cmd.arg(format!("{noise_w:.3}"));
     if let Some(speaker) = cfg.speaker {
         cmd.arg("--speaker");
         cmd.arg(speaker.to_string());
@@ -657,6 +681,14 @@ fn run_backend_embedded_piper(cfg: &TtsBackendConfig, text: &str, output_wav: &P
         );
     }
     Ok(())
+}
+
+fn piper_preset_values(preset: PiperPreset) -> (f32, f32, f32) {
+    match preset {
+        PiperPreset::Masculine => (1.10, 0.45, 0.70),
+        PiperPreset::Natural => (1.00, 0.60, 0.85),
+        PiperPreset::Crisp => (0.95, 0.35, 0.55),
+    }
 }
 
 fn run_backend_builtin_kokoro(cfg: &TtsBackendConfig, text: &str, output_wav: &Path) -> Result<()> {
@@ -841,7 +873,7 @@ fn main() -> Result<()> {
         backend.voice = Some(voice);
     }
     let backend = ensure_backend_assets(engine, &backend)?;
-    run_backend(engine, &backend, &text, &tmp_path)?;
+    run_backend(engine, &backend, &text, &tmp_path, cli.piper_preset)?;
 
     match output_mode {
         OutputMode::Pipewire => {
