@@ -15,6 +15,8 @@ pub struct Config {
     pub sound: SoundConfig,
     #[serde(default)]
     pub history: HistoryConfig,
+    #[serde(default)]
+    pub tts: TtsConfig,
     pub ipc: IpcConfig,
 }
 
@@ -111,6 +113,55 @@ impl Default for HistoryConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsConfig {
+    #[serde(default = "default_tts_engine")]
+    pub engine: String,
+    #[serde(default = "default_tts_output_mode")]
+    pub output_mode: String,
+    pub output_path: Option<PathBuf>,
+    #[serde(default)]
+    pub piper: TtsBackendConfig,
+    #[serde(default = "default_kokoro_backend")]
+    pub kokoro: TtsBackendConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsBackendConfig {
+    #[serde(default)]
+    pub command: String,
+    pub model_path: Option<PathBuf>,
+    pub voices_path: Option<PathBuf>,
+    pub voice: Option<String>,
+    pub language: Option<String>,
+    pub speaker: Option<u32>,
+}
+
+impl Default for TtsBackendConfig {
+    fn default() -> Self {
+        Self {
+            command: default_piper_command(),
+            model_path: None,
+            voices_path: None,
+            voice: None,
+            language: None,
+            speaker: None,
+        }
+    }
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            engine: default_tts_engine(),
+            output_mode: default_tts_output_mode(),
+            output_path: None,
+            piper: TtsBackendConfig::default(),
+            kokoro: default_kokoro_backend(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -137,6 +188,7 @@ impl Default for Config {
                 command: String::new(),
             },
             history: HistoryConfig::default(),
+            tts: TtsConfig::default(),
             ipc: IpcConfig { socket_path: None },
         }
     }
@@ -185,6 +237,33 @@ fn default_sound_command() -> String {
 
 fn default_history_max_entries() -> usize {
     100
+}
+
+fn default_tts_engine() -> String {
+    "piper".to_string()
+}
+
+fn default_tts_output_mode() -> String {
+    "pipewire".to_string()
+}
+
+fn default_piper_command() -> String {
+    "piper --model {model} --output_file {output}".to_string()
+}
+
+fn default_kokoro_command() -> String {
+    String::new()
+}
+
+fn default_kokoro_backend() -> TtsBackendConfig {
+    TtsBackendConfig {
+        command: default_kokoro_command(),
+        model_path: None,
+        voices_path: None,
+        voice: None,
+        language: None,
+        speaker: None,
+    }
 }
 
 pub fn config_path() -> Result<PathBuf> {

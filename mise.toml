@@ -19,19 +19,22 @@ run = "cargo build && mkdir -p ~/.local/bin && cp target/debug/voice-cmd ~/.loca
 [tasks.install-overlay]
 run = "cargo build --bin voice-cmd-overlay && mkdir -p ~/.local/bin && cp target/debug/voice-cmd-overlay ~/.local/bin/voice-cmd-overlay.new && mv ~/.local/bin/voice-cmd-overlay.new ~/.local/bin/voice-cmd-overlay"
 
+[tasks.install-tts]
+run = "cargo build --bin voice-cmd-tts && mkdir -p ~/.local/bin && cp target/debug/voice-cmd-tts ~/.local/bin/voice-cmd-tts.new && mv ~/.local/bin/voice-cmd-tts.new ~/.local/bin/voice-cmd-tts"
+
 [tasks.install-all]
-depends = ["install-local", "install-overlay"]
+depends = ["install-local", "install-overlay", "install-tts"]
 
 [tasks.release-build]
-run = "cargo build --release --bin voice-cmd --bin voice-cmd-overlay"
+run = "cargo build --release --bin voice-cmd --bin voice-cmd-overlay --bin voice-cmd-tts"
 
 [tasks.release-checksums]
 depends = ["release-build"]
-run = "mkdir -p dist && sha256sum target/release/voice-cmd target/release/voice-cmd-overlay > dist/voice-cmd-SHA256SUMS.txt"
+run = "mkdir -p dist && sha256sum target/release/voice-cmd target/release/voice-cmd-overlay target/release/voice-cmd-tts > dist/voice-cmd-SHA256SUMS.txt"
 
 [tasks.release-package]
 depends = ["release-checksums"]
-run = "mkdir -p dist && tar -C target/release -czf dist/voice-cmd-linux-x86_64.tar.gz voice-cmd voice-cmd-overlay"
+run = "mkdir -p dist && tar -C target/release -czf dist/voice-cmd-linux-x86_64.tar.gz voice-cmd voice-cmd-overlay voice-cmd-tts"
 
 [tasks.release-all]
 depends = ["release-package"]
