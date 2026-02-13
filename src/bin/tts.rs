@@ -53,6 +53,10 @@ struct Cli {
     /// Override config path.
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Print effective TTS backend diagnostics and exit.
+    #[arg(long)]
+    doctor: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -223,6 +227,93 @@ fn read_text(cli: &Cli) -> Result<String> {
         bail!("no text provided (use --text or pipe text on stdin)");
     }
     Ok(trimmed)
+}
+
+fn normalize_text_for_kokoro(text: &str) -> String {
+    let mut s = text
+        .replace('\u{2019}', "'")
+        .replace('\u{2018}', "'")
+        .replace('\u{201C}', "\"")
+        .replace('\u{201D}', "\"")
+        .replace(['\n', '\r', '\t'], " ");
+
+    s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let replacements = [
+        (" This ", " this "),
+        (" That ", " that "),
+        (" These ", " these "),
+        (" Those ", " those "),
+    ];
+    for (from, to) in replacements {
+        s = s.replace(from, to);
+    }
+    for (from, to) in [
+        ("This ", "this "),
+        ("That ", "that "),
+        ("These ", "these "),
+        ("Those ", "those "),
+    ] {
+        if s.starts_with(from) {
+            s = format!("{to}{}", &s[from.len()..]);
+        }
+    }
+    s
+}
+
+fn run_doctor(cli: &Cli, cfg_path: &Path, tts_cfg: &TtsConfig) -> Result<()> {
+    let engine = if let Some(engine) = cli.engine {
+        engine
+    } else {
+        parse_engine(&tts_cfg.engine)?
+    };
+    let output_mode = if let Some(mode) = cli.output {
+        mode
+    } else {
+        parse_output_mode(&tts_cfg.output_mode)?
+    };
+    let mut backend = backend_cfg(engine, tts_cfg).clone();
+    if let Some(voice) = cli.voice.clone() {
+        backend.voice = Some(voice);
+    }
+    let (default_model, _, default_voices) = default_backend_paths(engine)?;
+    let effective_model = backend.model_path.clone().unwrap_or(default_model);
+    let effective_voices = backend.voices_path.clone().or(default_voices);
+    let sample_text = cli
+        .text
+        .clone()
+        .unwrap_or_else(|| "This is a test sentence.".to_string());
+
+    println!("config_path={}", cfg_path.display());
+    println!("engine={:?}", engine);
+    println!("output_mode={:?}", output_mode);
+    println!("backend_command={}", backend.command);
+    println!("model_path={}", effective_model.display());
+    println!("model_exists={}", effective_model.exists());
+    if let Some(voices) = &effective_voices {
+        println!("voices_path={}", voices.display());
+        println!("voices_exists={}", voices.exists());
+    }
+    if let Some(runtime) = &backend.runtime_path {
+        println!("runtime_path={}", runtime.display());
+        println!("runtime_exists={}", runtime.exists());
+    }
+    println!("voice={}", backend.voice.clone().unwrap_or_default());
+    println!("sample_text={sample_text}");
+    if matches!(engine, Engine::Kokoro) {
+        let normalized = normalize_text_for_kokoro(&sample_text);
+        println!("kokoro_normalized_text={normalized}");
+        let _voice = parse_kokoro_voice(backend.voice.as_deref().unwrap_or("af_bella"))?;
+        match kokoro_tts::g2p(&sample_text, false) {
+            Ok(phonemes) => println!("kokoro_g2p_raw={phonemes}"),
+            Err(err) => println!("kokoro_g2p_raw_error={err}"),
+        }
+        match kokoro_tts::g2p(&normalized, false) {
+            Ok(phonemes) => println!("kokoro_g2p_normalized={phonemes}"),
+            Err(err) => println!("kokoro_g2p_normalized_error={err}"),
+        }
+    }
+    Ok(())
 }
 
 fn backend_cfg<'a>(engine: Engine, cfg: &'a TtsConfig) -> &'a TtsBackendConfig {
@@ -516,13 +607,14 @@ fn run_backend_builtin_kokoro(cfg: &TtsBackendConfig, text: &str, output_wav: &P
         .ok_or_else(|| anyhow::anyhow!("kokoro backend requires voices_path after asset setup"))?;
     let voice = parse_kokoro_voice(cfg.voice.as_deref().unwrap_or("af_bella"))?;
 
+    let normalized = normalize_text_for_kokoro(text);
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let audio = rt.block_on(async {
         let tts = KokoroTts::new(model_path, voices_path)
             .await
             .map_err(|err| anyhow::anyhow!("failed to initialize kokoro: {err}"))?;
         let (audio, _) = tts
-            .synth(text, voice)
+            .synth(&normalized, voice)
             .await
             .map_err(|err| anyhow::anyhow!("kokoro synthesis failed: {err}"))?;
         Ok::<Vec<f32>, anyhow::Error>(audio)
@@ -656,6 +748,10 @@ fn main() -> Result<()> {
         default_config_path()?
     };
     let tts_cfg = load_config(&config_path)?;
+    if cli.doctor {
+        run_doctor(&cli, &config_path, &tts_cfg)?;
+        return Ok(());
+    }
 
     let engine = if let Some(engine) = cli.engine {
         engine
