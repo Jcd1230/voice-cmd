@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use directories::ProjectDirs;
 use flate2::read::GzDecoder;
+use kokoro_tts::{KokoroTts, Voice as KokoroVoice};
 use rodio::{Decoder, OutputStream, Sink};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -145,13 +146,18 @@ fn default_kokoro_backend() -> TtsBackendConfig {
         model_path: None,
         runtime_path: None,
         voices_path: None,
-        voice: None,
+        voice: Some("af_bella".to_string()),
         language: None,
         speaker: None,
-        model_url: Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx".to_string()),
+        model_url: Some(
+            "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.int8.onnx"
+                .to_string(),
+        ),
         runtime_url: None,
         config_url: None,
-        voice_url: Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/af_bella.bin".to_string()),
+        voice_url: Some(
+            "https://github.com/mzdk100/kokoro/releases/download/V1.0/voices.bin".to_string(),
+        ),
     }
 }
 
@@ -234,8 +240,8 @@ fn default_backend_paths(engine: Engine) -> Result<(PathBuf, Option<PathBuf>, Op
             Ok((model, Some(cfg), None))
         }
         Engine::Kokoro => {
-            let model = model_root.join("kokoro").join("model_q8f16.onnx");
-            let voice = model_root.join("kokoro").join("af_bella.bin");
+            let model = model_root.join("kokoro").join("kokoro-v1.0.int8.onnx");
+            let voice = model_root.join("kokoro").join("voices.bin");
             Ok((model, None, Some(voice)))
         }
     }
@@ -332,6 +338,9 @@ fn run_backend(
     if matches!(engine, Engine::Piper) && should_use_builtin_piper(cfg.command.trim()) {
         return run_backend_embedded_piper(cfg, text, output_wav);
     }
+    if matches!(engine, Engine::Kokoro) && should_use_builtin_kokoro(cfg.command.trim()) {
+        return run_backend_builtin_kokoro(cfg, text, output_wav);
+    }
 
     let engine_name = match engine {
         Engine::Piper => "piper",
@@ -427,6 +436,10 @@ fn should_use_builtin_piper(command: &str) -> bool {
     command.is_empty() || command == "piper --model {model} --output_file {output}"
 }
 
+fn should_use_builtin_kokoro(command: &str) -> bool {
+    command.is_empty()
+}
+
 fn run_backend_embedded_piper(cfg: &TtsBackendConfig, text: &str, output_wav: &Path) -> Result<()> {
     let model_path = cfg
         .model_path
@@ -474,6 +487,66 @@ fn run_backend_embedded_piper(cfg: &TtsBackendConfig, text: &str, output_wav: &P
             output_wav.display()
         );
     }
+    Ok(())
+}
+
+fn run_backend_builtin_kokoro(cfg: &TtsBackendConfig, text: &str, output_wav: &Path) -> Result<()> {
+    let model_path = cfg
+        .model_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("kokoro backend requires model_path after asset setup"))?;
+    let voices_path = cfg
+        .voices_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("kokoro backend requires voices_path after asset setup"))?;
+    let voice = parse_kokoro_voice(cfg.voice.as_deref().unwrap_or("af_bella"))?;
+
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    let audio = rt.block_on(async {
+        let tts = KokoroTts::new(model_path, voices_path)
+            .await
+            .map_err(|err| anyhow::anyhow!("failed to initialize kokoro: {err}"))?;
+        let (audio, _) = tts
+            .synth(text, voice)
+            .await
+            .map_err(|err| anyhow::anyhow!("kokoro synthesis failed: {err}"))?;
+        Ok::<Vec<f32>, anyhow::Error>(audio)
+    })?;
+    save_f32_mono_wav(output_wav, &audio, 24_000)?;
+    Ok(())
+}
+
+fn parse_kokoro_voice(name: &str) -> Result<KokoroVoice> {
+    let speed = 1.0_f32;
+    match name.to_ascii_lowercase().as_str() {
+        "af_bella" => Ok(KokoroVoice::AfBella(speed)),
+        "af_sky" => Ok(KokoroVoice::AfSky(speed)),
+        "af_nova" => Ok(KokoroVoice::AfNova(speed)),
+        "am_michael" => Ok(KokoroVoice::AmMichael(speed)),
+        "am_adam" => Ok(KokoroVoice::AmAdam(speed)),
+        other => bail!(
+            "unsupported kokoro voice '{}'; supported: af_bella, af_sky, af_nova, am_michael, am_adam",
+            other
+        ),
+    }
+}
+
+fn save_f32_mono_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<()> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)
+        .with_context(|| format!("failed to create wav at {}", path.display()))?;
+    for sample in samples {
+        let s = (*sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+        writer
+            .write_sample(s)
+            .context("failed to write wav sample")?;
+    }
+    writer.finalize().context("failed to finalize wav")?;
     Ok(())
 }
 

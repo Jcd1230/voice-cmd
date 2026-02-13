@@ -275,7 +275,7 @@ fn default_kokoro_backend() -> TtsBackendConfig {
         model_path: None,
         runtime_path: None,
         voices_path: None,
-        voice: None,
+        voice: Some("af_bella".to_string()),
         language: None,
         speaker: None,
         model_url: default_tts_kokoro_model_url(),
@@ -308,11 +308,14 @@ fn default_tts_piper_runtime_url() -> Option<String> {
 }
 
 fn default_tts_kokoro_model_url() -> Option<String> {
-    Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx".to_string())
+    Some(
+        "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.int8.onnx"
+            .to_string(),
+    )
 }
 
 fn default_tts_kokoro_voice_url() -> Option<String> {
-    Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/af_bella.bin".to_string())
+    Some("https://github.com/mzdk100/kokoro/releases/download/V1.0/voices.bin".to_string())
 }
 
 pub fn config_path() -> Result<PathBuf> {
