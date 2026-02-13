@@ -46,6 +46,10 @@ struct Cli {
     #[arg(long)]
     text: Option<String>,
 
+    /// Voice name override for selected engine (e.g. af_sky, am_michael).
+    #[arg(long)]
+    voice: Option<String>,
+
     /// Override config path.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -658,8 +662,11 @@ fn main() -> Result<()> {
     let tmp_path = tmp.path().to_path_buf();
     tmp.flush().ok();
 
-    let backend = backend_cfg(engine, &tts_cfg);
-    let backend = ensure_backend_assets(engine, backend)?;
+    let mut backend = backend_cfg(engine, &tts_cfg).clone();
+    if let Some(voice) = cli.voice.clone() {
+        backend.voice = Some(voice);
+    }
+    let backend = ensure_backend_assets(engine, &backend)?;
     run_backend(engine, &backend, &text, &tmp_path)?;
 
     match output_mode {

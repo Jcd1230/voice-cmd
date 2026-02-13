@@ -275,7 +275,7 @@ fn default_kokoro_backend() -> TtsBackendConfig {
         model_path: None,
         runtime_path: None,
         voices_path: None,
-        voice: Some("af_bella".to_string()),
+        voice: Some("af_sky".to_string()),
         language: None,
         speaker: None,
         model_url: default_tts_kokoro_model_url(),
