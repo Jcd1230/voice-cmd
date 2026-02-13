@@ -5,6 +5,7 @@ use flate2::read::GzDecoder;
 use kokoro_tts::{KokoroTts, Voice as KokoroVoice};
 use rodio::{Decoder, OutputStream, Sink};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::ErrorKind;
@@ -57,6 +58,10 @@ struct Cli {
     /// Print effective TTS backend diagnostics and exit.
     #[arg(long)]
     doctor: bool,
+
+    /// List available voices/speakers for the selected engine and exit.
+    #[arg(long)]
+    list_voices: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -312,6 +317,64 @@ fn run_doctor(cli: &Cli, cfg_path: &Path, tts_cfg: &TtsConfig) -> Result<()> {
             Ok(phonemes) => println!("kokoro_g2p_normalized={phonemes}"),
             Err(err) => println!("kokoro_g2p_normalized_error={err}"),
         }
+    }
+    Ok(())
+}
+
+fn run_list_voices(cli: &Cli, tts_cfg: &TtsConfig) -> Result<()> {
+    let engine = if let Some(engine) = cli.engine {
+        engine
+    } else {
+        parse_engine(&tts_cfg.engine)?
+    };
+
+    let backend = backend_cfg(engine, tts_cfg).clone();
+    let backend = ensure_backend_assets(engine, &backend)?;
+    match engine {
+        Engine::Piper => list_piper_speakers(&backend),
+        Engine::Kokoro => {
+            println!("af_bella");
+            println!("af_sky");
+            println!("af_nova");
+            println!("am_michael");
+            println!("am_adam");
+            Ok(())
+        }
+    }
+}
+
+fn list_piper_speakers(backend: &TtsBackendConfig) -> Result<()> {
+    let model_path = backend
+        .model_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("missing piper model path"))?;
+    let cfg_path = PathBuf::from(format!("{}.json", model_path.display()));
+    if !cfg_path.exists() {
+        bail!(
+            "missing piper metadata config at {} (expected alongside model)",
+            cfg_path.display()
+        );
+    }
+    let raw = std::fs::read_to_string(&cfg_path)
+        .with_context(|| format!("failed to read {}", cfg_path.display()))?;
+    let json: Value = serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", cfg_path.display()))?;
+    let Some(map) = json.get("speaker_id_map").and_then(|v| v.as_object()) else {
+        println!("single-speaker model (no speaker_id_map)");
+        return Ok(());
+    };
+
+    let mut speakers = map
+        .iter()
+        .filter_map(|(name, value)| value.as_i64().map(|id| (id, name.clone())))
+        .collect::<Vec<_>>();
+    speakers.sort_by_key(|(id, _)| *id);
+    if speakers.is_empty() {
+        println!("single-speaker model (speaker_id_map empty)");
+        return Ok(());
+    }
+    for (id, name) in speakers {
+        println!("{id}\t{name}");
     }
     Ok(())
 }
@@ -750,6 +813,10 @@ fn main() -> Result<()> {
     let tts_cfg = load_config(&config_path)?;
     if cli.doctor {
         run_doctor(&cli, &config_path, &tts_cfg)?;
+        return Ok(());
+    }
+    if cli.list_voices {
+        run_list_voices(&cli, &tts_cfg)?;
         return Ok(());
     }
 

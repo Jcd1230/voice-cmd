@@ -3149,6 +3149,7 @@ dependencies = [
  "rodio",
  "rubato",
  "serde",
+ "serde_json",
  "shell-words",
  "tar",
  "tempfile",
