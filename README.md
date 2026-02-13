@@ -17,6 +17,7 @@ It captures microphone audio, segments speech with VAD, transcribes with a local
 - Configurable output command and sound hook
 - Model prefetch command: `voice-cmd model fetch`
 - Built-in diagnostics (`voice-cmd doctor`)
+- `voice-cmd-tts` with auto-downloaded Piper runtime and model
 
 ## Requirements
 

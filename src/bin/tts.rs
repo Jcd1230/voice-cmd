@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use directories::ProjectDirs;
+use flate2::read::GzDecoder;
 use rodio::{Decoder, OutputStream, Sink};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -9,6 +10,7 @@ use std::io::ErrorKind;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use tar::Archive;
 use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Parser)]
@@ -84,12 +86,15 @@ struct TtsBackendConfig {
     #[serde(default)]
     command: String,
     model_path: Option<PathBuf>,
+    runtime_path: Option<PathBuf>,
     voices_path: Option<PathBuf>,
     voice: Option<String>,
     language: Option<String>,
     speaker: Option<u32>,
     #[serde(default)]
     model_url: Option<String>,
+    #[serde(default)]
+    runtime_url: Option<String>,
     #[serde(default)]
     config_url: Option<String>,
     #[serde(default)]
@@ -99,13 +104,15 @@ struct TtsBackendConfig {
 impl Default for TtsBackendConfig {
     fn default() -> Self {
         Self {
-            command: "piper --model {model} --output_file {output}".to_string(),
+            command: String::new(),
             model_path: None,
+            runtime_path: None,
             voices_path: None,
             voice: None,
             language: None,
             speaker: None,
             model_url: Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx".to_string()),
+            runtime_url: default_piper_runtime_url(),
             config_url: Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json".to_string()),
             voice_url: None,
         }
@@ -136,13 +143,29 @@ fn default_kokoro_backend() -> TtsBackendConfig {
     TtsBackendConfig {
         command: String::new(),
         model_path: None,
+        runtime_path: None,
         voices_path: None,
         voice: None,
         language: None,
         speaker: None,
         model_url: Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx".to_string()),
+        runtime_url: None,
         config_url: None,
         voice_url: Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/af_bella.bin".to_string()),
+    }
+}
+
+fn default_piper_runtime_url() -> Option<String> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some(
+            "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz"
+                .to_string(),
+        ),
+        "aarch64" => Some(
+            "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_aarch64.tar.gz"
+                .to_string(),
+        ),
+        _ => None,
     }
 }
 
@@ -306,6 +329,10 @@ fn run_backend(
     text: &str,
     output_wav: &Path,
 ) -> Result<()> {
+    if matches!(engine, Engine::Piper) && should_use_builtin_piper(cfg.command.trim()) {
+        return run_backend_embedded_piper(cfg, text, output_wav);
+    }
+
     let engine_name = match engine {
         Engine::Piper => "piper",
         Engine::Kokoro => "kokoro",
@@ -393,6 +420,116 @@ fn run_backend(
             output_wav.display()
         );
     }
+    Ok(())
+}
+
+fn should_use_builtin_piper(command: &str) -> bool {
+    command.is_empty() || command == "piper --model {model} --output_file {output}"
+}
+
+fn run_backend_embedded_piper(cfg: &TtsBackendConfig, text: &str, output_wav: &Path) -> Result<()> {
+    let model_path = cfg
+        .model_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("tts backend requires model_path after asset setup"))?;
+    let runtime = ensure_piper_runtime(cfg)?;
+
+    let mut cmd = Command::new(&runtime);
+    cmd.arg("--model");
+    cmd.arg(model_path);
+    cmd.arg("--output_file");
+    cmd.arg(output_wav);
+    if let Some(speaker) = cfg.speaker {
+        cmd.arg("--speaker");
+        cmd.arg(speaker.to_string());
+    }
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "failed to start embedded piper runtime at {}",
+            runtime.display()
+        )
+    })?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(text.as_bytes())
+            .context("failed to write text to embedded piper stdin")?;
+    }
+    let output = child
+        .wait_with_output()
+        .context("failed to wait for embedded piper runtime")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "embedded piper runtime failed: status={} stderr={}",
+            output.status,
+            stderr.trim()
+        );
+    }
+    if !output_wav.exists() {
+        bail!(
+            "embedded piper completed but output file missing at {}",
+            output_wav.display()
+        );
+    }
+    Ok(())
+}
+
+fn ensure_piper_runtime(cfg: &TtsBackendConfig) -> Result<PathBuf> {
+    if let Some(path) = &cfg.runtime_path {
+        if path.exists() {
+            return Ok(path.clone());
+        }
+    }
+
+    let proj = ProjectDirs::from("io", "voice-cmd", "voice-cmd")
+        .context("failed to resolve data directory")?;
+    let root = proj
+        .data_dir()
+        .join("models")
+        .join("tts")
+        .join("runtime")
+        .join("piper");
+    let bin = root.join("piper").join("piper");
+    if bin.exists() {
+        return Ok(bin);
+    }
+
+    let runtime_url = cfg.runtime_url.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "no piper runtime configured for architecture '{}' (set tts.piper.runtime_path or tts.piper.runtime_url)",
+            std::env::consts::ARCH
+        )
+    })?;
+    download_extract_tar_gz(runtime_url, &root)?;
+    if !bin.exists() {
+        bail!(
+            "piper runtime download completed but binary not found at {}",
+            bin.display()
+        );
+    }
+    Ok(bin)
+}
+
+fn download_extract_tar_gz(url: &str, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest)
+        .with_context(|| format!("failed to create directory {}", dest.display()))?;
+    eprintln!("tts: downloading runtime {} -> {}", url, dest.display());
+    let response = ureq::get(url)
+        .call()
+        .map_err(|err| anyhow::anyhow!("failed to download runtime {url}: {err}"))?;
+    let mut tmp = NamedTempFile::new_in(dest).context("failed to create temp archive file")?;
+    let mut reader = response.into_reader();
+    std::io::copy(&mut reader, &mut tmp).context("failed to write runtime archive")?;
+
+    let file = File::open(tmp.path()).context("failed to open downloaded runtime archive")?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    archive
+        .unpack(dest)
+        .with_context(|| format!("failed to extract runtime archive to {}", dest.display()))?;
     Ok(())
 }
 

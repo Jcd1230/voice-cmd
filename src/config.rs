@@ -131,12 +131,15 @@ pub struct TtsBackendConfig {
     #[serde(default)]
     pub command: String,
     pub model_path: Option<PathBuf>,
+    pub runtime_path: Option<PathBuf>,
     pub voices_path: Option<PathBuf>,
     pub voice: Option<String>,
     pub language: Option<String>,
     pub speaker: Option<u32>,
     #[serde(default)]
     pub model_url: Option<String>,
+    #[serde(default)]
+    pub runtime_url: Option<String>,
     #[serde(default)]
     pub config_url: Option<String>,
     #[serde(default)]
@@ -148,11 +151,13 @@ impl Default for TtsBackendConfig {
         Self {
             command: default_piper_command(),
             model_path: None,
+            runtime_path: None,
             voices_path: None,
             voice: None,
             language: None,
             speaker: None,
             model_url: default_tts_piper_model_url(),
+            runtime_url: default_tts_piper_runtime_url(),
             config_url: default_tts_piper_config_url(),
             voice_url: None,
         }
@@ -257,7 +262,7 @@ fn default_tts_output_mode() -> String {
 }
 
 fn default_piper_command() -> String {
-    "piper --model {model} --output_file {output}".to_string()
+    String::new()
 }
 
 fn default_kokoro_command() -> String {
@@ -268,11 +273,13 @@ fn default_kokoro_backend() -> TtsBackendConfig {
     TtsBackendConfig {
         command: default_kokoro_command(),
         model_path: None,
+        runtime_path: None,
         voices_path: None,
         voice: None,
         language: None,
         speaker: None,
         model_url: default_tts_kokoro_model_url(),
+        runtime_url: None,
         config_url: None,
         voice_url: default_tts_kokoro_voice_url(),
     }
@@ -284,6 +291,20 @@ fn default_tts_piper_model_url() -> Option<String> {
 
 fn default_tts_piper_config_url() -> Option<String> {
     Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json".to_string())
+}
+
+fn default_tts_piper_runtime_url() -> Option<String> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some(
+            "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz"
+                .to_string(),
+        ),
+        "aarch64" => Some(
+            "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_aarch64.tar.gz"
+                .to_string(),
+        ),
+        _ => None,
+    }
 }
 
 fn default_tts_kokoro_model_url() -> Option<String> {
