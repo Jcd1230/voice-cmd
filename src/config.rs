@@ -65,6 +65,7 @@ impl Default for VadConfig {
 pub struct AudioConfig {
     pub sample_rate: u32,
     pub frame_ms: u32,
+    pub input_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +111,7 @@ impl Default for Config {
             audio: AudioConfig {
                 sample_rate: 16_000,
                 frame_ms: 30,
+                input_device: None,
             },
             output: OutputConfig {
                 command: "ydotool type --key-delay 2 {text}".to_string(),
@@ -177,8 +179,8 @@ pub fn ensure_default_config(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("failed to create config directory")?;
     }
-    let content = toml::to_string_pretty(&Config::default())
-        .context("failed to serialize default config")?;
+    let content =
+        toml::to_string_pretty(&Config::default()).context("failed to serialize default config")?;
     fs::write(path, content).context("failed to write config")?;
     Ok(())
 }

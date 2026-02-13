@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -118,7 +118,12 @@ pub async fn run_segmenter(
                     speech_buffer.extend_from_slice(&frame);
                     speech_ms += frame_ms;
                 } else {
-                    finalize_segment_if_ready(&mut speech_buffer, &mut speech_ms, cfg.min_speech_ms, &on_segment);
+                    finalize_segment_if_ready(
+                        &mut speech_buffer,
+                        &mut speech_ms,
+                        cfg.min_speech_ms,
+                        &on_segment,
+                    );
                     in_speech = false;
                 }
             }

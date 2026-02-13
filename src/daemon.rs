@@ -4,16 +4,16 @@ use crate::transcription::{Transcriber, TranscriptionConfig};
 use crate::vad::{self, VadConfig};
 use anyhow::{Context, Result};
 use cpal::traits::StreamTrait;
-use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
+use rodio::{OutputStream, Sink, buffer::SamplesBuffer};
 use shell_words;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, Mutex, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 
 #[derive(Debug, Default)]
 struct DaemonState {
@@ -46,6 +46,7 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     let (stream, audio_info) = audio::start_capture(
         &AudioConfig {
             frame_ms: config.audio.frame_ms,
+            input_device: config.audio.input_device.clone(),
         },
         audio_tx,
     )?;
@@ -70,7 +71,9 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     tokio::spawn({
         let recording_flag = Arc::clone(&recording_flag);
         async move {
-            if let Err(err) = vad::run_segmenter(audio_rx, vad_cfg, segment_tx, recording_flag).await {
+            if let Err(err) =
+                vad::run_segmenter(audio_rx, vad_cfg, segment_tx, recording_flag).await
+            {
                 eprintln!("VAD error: {err:#}");
             }
         }
@@ -149,7 +152,9 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-pub fn parse_quantization(value: &str) -> Result<transcribe_rs::engines::parakeet::QuantizationType> {
+pub fn parse_quantization(
+    value: &str,
+) -> Result<transcribe_rs::engines::parakeet::QuantizationType> {
     match value.to_lowercase().as_str() {
         "int8" => Ok(transcribe_rs::engines::parakeet::QuantizationType::Int8),
         "fp32" => Ok(transcribe_rs::engines::parakeet::QuantizationType::FP32),
@@ -164,9 +169,15 @@ pub fn parse_granularity(
         return Ok(None);
     };
     match value.to_lowercase().as_str() {
-        "token" => Ok(Some(transcribe_rs::engines::parakeet::TimestampGranularity::Token)),
-        "segment" => Ok(Some(transcribe_rs::engines::parakeet::TimestampGranularity::Segment)),
-        "word" => Ok(Some(transcribe_rs::engines::parakeet::TimestampGranularity::Word)),
+        "token" => Ok(Some(
+            transcribe_rs::engines::parakeet::TimestampGranularity::Token,
+        )),
+        "segment" => Ok(Some(
+            transcribe_rs::engines::parakeet::TimestampGranularity::Segment,
+        )),
+        "word" => Ok(Some(
+            transcribe_rs::engines::parakeet::TimestampGranularity::Word,
+        )),
         other => anyhow::bail!("unsupported timestamp_granularity: {other}"),
     }
 }
@@ -272,7 +283,9 @@ async fn run_output_hook(text: &str, config: &Config) -> Result<()> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         eprintln!(
             "output hook failed: status={} stdout='{}' stderr='{}'",
-            output.status, stdout.trim(), stderr.trim()
+            output.status,
+            stdout.trim(),
+            stderr.trim()
         );
     } else if !output.stderr.is_empty() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -319,8 +332,8 @@ async fn run_sound_hook(config: &Config) -> Result<()> {
 fn play_builtin_tone() -> Result<()> {
     let (_stream, handle) = OutputStream::try_default()
         .map_err(|err| anyhow::anyhow!("failed to open default output stream: {err}"))?;
-    let sink = Sink::try_new(&handle)
-        .map_err(|err| anyhow::anyhow!("failed to create sink: {err}"))?;
+    let sink =
+        Sink::try_new(&handle).map_err(|err| anyhow::anyhow!("failed to create sink: {err}"))?;
 
     let source = SamplesBuffer::new(1, 48_000, builtin_tone_samples().to_vec());
     sink.append(source);

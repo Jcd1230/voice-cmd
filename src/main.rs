@@ -26,6 +26,7 @@ Common usage:
   voice-cmd daemon-status  Check if the daemon is running
   voice-cmd shutdown       Stop the running daemon
   voice-cmd toggle         Toggle recording
+  voice-cmd audio devices  List available input devices
   voice-cmd model fetch    Download the model if missing
 
 Configure defaults in ~/.config/voice-cmd/config.toml.
@@ -95,6 +96,11 @@ enum Commands {
         #[command(subcommand)]
         command: ModelCommands,
     },
+    /// Audio device utilities.
+    Audio {
+        #[command(subcommand)]
+        command: AudioCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -103,6 +109,12 @@ enum ModelCommands {
     Fetch,
     /// Show whether the configured model is ready.
     Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum AudioCommands {
+    /// List available input devices.
+    Devices,
 }
 
 #[tokio::main]
@@ -126,14 +138,15 @@ async fn main() -> Result<()> {
                     .and_then(|proj| proj.state_dir().map(|dir| dir.join("daemon.log")))
                     .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-daemon.log"));
                 if let Some(parent) = log_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .context("failed to create log directory")?;
+                    std::fs::create_dir_all(parent).context("failed to create log directory")?;
                 }
                 let log_file = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&log_path)
-                    .with_context(|| format!("failed to open log file at {}", log_path.display()))?;
+                    .with_context(|| {
+                        format!("failed to open log file at {}", log_path.display())
+                    })?;
                 let mut cmd = std::process::Command::new(exe);
                 cmd.arg("daemon");
                 if no_overlay {
@@ -254,6 +267,18 @@ async fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Audio { command } => match command {
+            AudioCommands::Devices => {
+                let devices = audio::list_input_devices()?;
+                if devices.is_empty() {
+                    println!("no input devices found");
+                } else {
+                    for (idx, name) in devices.iter().enumerate() {
+                        println!("{}: {}", idx + 1, name);
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
@@ -295,7 +320,8 @@ fn start_daemon_in_background(socket_path: &PathBuf) -> Result<()> {
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
-    cmd.spawn().context("failed to start daemon in background")?;
+    cmd.spawn()
+        .context("failed to start daemon in background")?;
     Ok(())
 }
 

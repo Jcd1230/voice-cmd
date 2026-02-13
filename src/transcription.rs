@@ -1,15 +1,15 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use flate2::read::GzDecoder;
 use rubato::{FftFixedIn, Resampler};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tar::Archive;
 use tempfile::NamedTempFile;
+use transcribe_rs::TranscriptionEngine;
 use transcribe_rs::engines::parakeet::{
     ParakeetEngine, ParakeetInferenceParams, ParakeetModelParams, QuantizationType,
     TimestampGranularity,
 };
-use transcribe_rs::TranscriptionEngine;
 
 #[derive(Debug, Clone)]
 pub struct TranscriptionConfig {
@@ -65,11 +65,13 @@ impl Transcriber {
             samples.to_vec()
         };
 
-        let params = self.cfg.timestamp_granularity.clone().map(|granularity| {
-            ParakeetInferenceParams {
-                timestamp_granularity: granularity,
-            }
-        });
+        let params =
+            self.cfg
+                .timestamp_granularity
+                .clone()
+                .map(|granularity| ParakeetInferenceParams {
+                    timestamp_granularity: granularity,
+                });
 
         let transcription = self
             .engine
@@ -110,11 +112,14 @@ fn ensure_model(cfg: &TranscriptionConfig) -> Result<()> {
         .map_err(|err| anyhow!("failed to download model: {err}"))?;
     let mut tmp = NamedTempFile::new().context("failed to create temp file")?;
     let mut reader = response.into_reader();
-    std::io::copy(&mut reader, &mut tmp)
-        .context("failed to write model archive")?;
+    std::io::copy(&mut reader, &mut tmp).context("failed to write model archive")?;
 
-    extract_tar_gz(tmp.path(), &cfg.model_path)
-        .with_context(|| format!("failed to extract model archive to {}", cfg.model_path.display()))?;
+    extract_tar_gz(tmp.path(), &cfg.model_path).with_context(|| {
+        format!(
+            "failed to extract model archive to {}",
+            cfg.model_path.display()
+        )
+    })?;
 
     if !model_ready(&cfg.model_path, &cfg.quantization) {
         if model_ready(parent, &cfg.quantization) {
@@ -148,7 +153,8 @@ fn model_ready(path: &Path, quantization: &QuantizationType) -> bool {
                 && path.join("decoder_joint-model.int8.onnx").exists()
         }
         QuantizationType::FP32 => {
-            path.join("encoder-model.onnx").exists() && path.join("decoder_joint-model.onnx").exists()
+            path.join("encoder-model.onnx").exists()
+                && path.join("decoder_joint-model.onnx").exists()
         }
     }
 }
@@ -172,8 +178,8 @@ fn move_model_files(src: &Path, dest: &Path) -> Result<()> {
 fn quantization_files_for_dir(path: &Path) -> Option<Vec<&'static str>> {
     let has_int8 = path.join("encoder-model.int8.onnx").exists()
         && path.join("decoder_joint-model.int8.onnx").exists();
-    let has_fp32 = path.join("encoder-model.onnx").exists()
-        && path.join("decoder_joint-model.onnx").exists();
+    let has_fp32 =
+        path.join("encoder-model.onnx").exists() && path.join("decoder_joint-model.onnx").exists();
     if has_int8 {
         return Some(vec![
             "encoder-model.int8.onnx",
@@ -229,7 +235,8 @@ fn resample_rubato(samples: &[f32], src_rate: u32, dst_rate: u32) -> Result<Vec<
         i = end;
     }
 
-    let expected_len = ((samples.len() as f64) * (dst_rate as f64 / src_rate as f64)).round() as usize;
+    let expected_len =
+        ((samples.len() as f64) * (dst_rate as f64 / src_rate as f64)).round() as usize;
     if out.len() > expected_len {
         out.truncate(expected_len);
     } else if out.len() < expected_len {

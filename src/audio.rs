@@ -6,6 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
     pub frame_ms: u32,
+    pub input_device: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -20,9 +21,7 @@ pub fn start_capture(
     tx: UnboundedSender<Vec<f32>>,
 ) -> Result<(cpal::Stream, AudioInfo)> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .context("no default input device available")?;
+    let device = select_input_device(&host, config.input_device.as_deref())?;
     let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
 
     let input_config = device
@@ -71,7 +70,8 @@ pub fn start_capture(
             let stream = device.build_input_stream(
                 &cfg,
                 move |data: &[i16], _| {
-                    let converted: Vec<f32> = data.iter().map(|v| *v as f32 / i16::MAX as f32).collect();
+                    let converted: Vec<f32> =
+                        data.iter().map(|v| *v as f32 / i16::MAX as f32).collect();
                     push_frames(&converted, channels, frame_size, &mut buffer, &tx);
                 },
                 err_fn,
@@ -113,6 +113,61 @@ pub fn start_capture(
     }
 }
 
+pub fn list_input_devices() -> Result<Vec<String>> {
+    let host = cpal::default_host();
+    let mut names = Vec::new();
+    for device in host
+        .input_devices()
+        .context("failed to enumerate input devices")?
+    {
+        names.push(device.name().unwrap_or_else(|_| "<unknown>".to_string()));
+    }
+    Ok(names)
+}
+
+fn select_input_device(host: &cpal::Host, preferred_name: Option<&str>) -> Result<cpal::Device> {
+    let default_device = host
+        .default_input_device()
+        .context("no default input device available")?;
+
+    let Some(preferred_name) = preferred_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(default_device);
+    };
+
+    let mut first_partial_match: Option<cpal::Device> = None;
+    for device in host
+        .input_devices()
+        .context("failed to enumerate input devices")?
+    {
+        let name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
+        if name == preferred_name {
+            return Ok(device);
+        }
+        if first_partial_match.is_none()
+            && name.to_lowercase().contains(&preferred_name.to_lowercase())
+        {
+            first_partial_match = Some(device);
+        }
+    }
+
+    if let Some(device) = first_partial_match {
+        eprintln!(
+            "audio input: using partial device match for '{}'",
+            preferred_name
+        );
+        return Ok(device);
+    }
+
+    eprintln!(
+        "audio input: preferred device '{}' not found; using default input device",
+        preferred_name
+    );
+    Ok(default_device)
+}
+
 fn push_frames(
     data: &[f32],
     channels: usize,
@@ -152,21 +207,15 @@ mod tests {
         let err_fn = |err| eprintln!("audio stream error: {err}");
 
         let stream = match input_config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                device
-                    .build_input_stream(&input_config.config(), move |_: &[f32], _| {}, err_fn, None)
-                    .expect("failed to build f32 stream")
-            }
-            cpal::SampleFormat::I16 => {
-                device
-                    .build_input_stream(&input_config.config(), move |_: &[i16], _| {}, err_fn, None)
-                    .expect("failed to build i16 stream")
-            }
-            cpal::SampleFormat::U16 => {
-                device
-                    .build_input_stream(&input_config.config(), move |_: &[u16], _| {}, err_fn, None)
-                    .expect("failed to build u16 stream")
-            }
+            cpal::SampleFormat::F32 => device
+                .build_input_stream(&input_config.config(), move |_: &[f32], _| {}, err_fn, None)
+                .expect("failed to build f32 stream"),
+            cpal::SampleFormat::I16 => device
+                .build_input_stream(&input_config.config(), move |_: &[i16], _| {}, err_fn, None)
+                .expect("failed to build i16 stream"),
+            cpal::SampleFormat::U16 => device
+                .build_input_stream(&input_config.config(), move |_: &[u16], _| {}, err_fn, None)
+                .expect("failed to build u16 stream"),
             _ => panic!("unsupported sample format"),
         };
 
