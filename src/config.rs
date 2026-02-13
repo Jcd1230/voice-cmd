@@ -13,6 +13,8 @@ pub struct Config {
     pub output: OutputConfig,
     #[serde(default)]
     pub sound: SoundConfig,
+    #[serde(default)]
+    pub history: HistoryConfig,
     pub ipc: IpcConfig,
 }
 
@@ -95,6 +97,20 @@ pub struct IpcConfig {
     pub socket_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    #[serde(default = "default_history_max_entries")]
+    pub max_entries: usize,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: default_history_max_entries(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -120,6 +136,7 @@ impl Default for Config {
                 enabled: true,
                 command: String::new(),
             },
+            history: HistoryConfig::default(),
             ipc: IpcConfig { socket_path: None },
         }
     }
@@ -164,6 +181,10 @@ fn default_true() -> bool {
 
 fn default_sound_command() -> String {
     String::new()
+}
+
+fn default_history_max_entries() -> usize {
+    100
 }
 
 pub fn config_path() -> Result<PathBuf> {

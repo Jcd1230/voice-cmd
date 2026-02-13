@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::process::Command as StdCommand;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -26,6 +27,9 @@ Common usage:
   voice-cmd daemon-status  Check if the daemon is running
   voice-cmd shutdown       Stop the running daemon
   voice-cmd toggle         Toggle recording
+  voice-cmd reload         Reload runtime config in daemon
+  voice-cmd history        Show recent transcriptions
+  voice-cmd doctor         Run diagnostics
   voice-cmd audio devices  List available input devices
   voice-cmd model fetch    Download the model if missing
 
@@ -83,6 +87,23 @@ enum Commands {
     },
     /// Shut down the running daemon.
     Shutdown {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Reload daemon runtime config from disk.
+    Reload {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Show recent transcription history from daemon memory.
+    History {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Run local diagnostics.
+    Doctor {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
@@ -175,7 +196,7 @@ async fn main() -> Result<()> {
                     eprintln!("warning: failed to launch overlay: {err}");
                 }
             }
-            daemon::run(config, socket_path).await?;
+            daemon::run(config, socket_path, path).await?;
         }
         Commands::Toggle { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
@@ -221,6 +242,19 @@ async fn main() -> Result<()> {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
             let response = ipc::send_command(&socket_path, "SHUTDOWN").await?;
             println!("{response}");
+        }
+        Commands::Reload { socket } => {
+            let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
+            let response = ipc::send_command(&socket_path, "RELOAD").await?;
+            println!("{response}");
+        }
+        Commands::History { limit, socket } => {
+            let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
+            let response = ipc::send_command(&socket_path, &format!("HISTORY {limit}")).await?;
+            println!("{response}");
+        }
+        Commands::Doctor { socket } => {
+            run_doctor(socket).await?;
         }
         Commands::Config { init } => {
             let path = config::config_path()?;
@@ -281,6 +315,50 @@ async fn main() -> Result<()> {
         },
     }
 
+    Ok(())
+}
+
+async fn run_doctor(socket: Option<PathBuf>) -> Result<()> {
+    let cfg_path = config::config_path()?;
+    let cfg = config::load_config(&cfg_path)?;
+    let socket_path = socket
+        .or_else(|| cfg.ipc.socket_path.clone())
+        .unwrap_or_else(ipc::default_socket_path);
+    let model_quantization = daemon::parse_quantization(&cfg.model.quantization)?;
+    let model_status = transcription::model_status(&transcription::TranscriptionConfig {
+        model_path: cfg.model.path.clone(),
+        quantization: model_quantization,
+        timestamp_granularity: daemon::parse_granularity(&cfg.model.timestamp_granularity)?,
+        download_url: cfg.model.download_url.clone(),
+    });
+    let daemon_status = ipc::send_command(&socket_path, "STATUS").await.ok();
+    let ydotool_ok = StdCommand::new("sh")
+        .arg("-lc")
+        .arg("command -v ydotool >/dev/null 2>&1")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let devices = audio::list_input_devices().unwrap_or_default();
+
+    println!("config_path={}", cfg_path.display());
+    println!("socket_path={}", socket_path.display());
+    println!("model_path={}", cfg.model.path.display());
+    println!("model_ready={}", model_status.ready);
+    println!("model_fallback_ready={}", model_status.fallback_ready);
+    println!("daemon_running={}", daemon_status.is_some());
+    if let Some(status) = daemon_status {
+        println!("daemon_status={}", status);
+    }
+    println!("output_command={}", cfg.output.command);
+    println!("ydotool_in_path={ydotool_ok}");
+    println!(
+        "audio_input_device_config={}",
+        cfg.audio.input_device.unwrap_or_default()
+    );
+    println!("audio_input_devices={}", devices.len());
+    for (idx, name) in devices.iter().enumerate() {
+        println!("audio_device_{}={}", idx + 1, name);
+    }
     Ok(())
 }
 

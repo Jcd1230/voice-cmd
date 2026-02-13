@@ -6,21 +6,29 @@ use anyhow::{Context, Result};
 use cpal::traits::StreamTrait;
 use rodio::{OutputStream, Sink, buffer::SamplesBuffer};
 use shell_words;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, RwLock, mpsc, watch};
 
 #[derive(Debug, Default)]
 struct DaemonState {
     recording: bool,
 }
 
-pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
+#[derive(Debug, Clone)]
+struct HistoryEntry {
+    unix_ms: u128,
+    text: String,
+}
+
+pub async fn run(config: Config, socket_path: PathBuf, config_path: PathBuf) -> Result<()> {
     if let Some(parent) = socket_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -36,6 +44,8 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
         .with_context(|| format!("failed to bind socket at {}", socket_path.display()))?;
 
     let state = Arc::new(Mutex::new(DaemonState::default()));
+    let runtime_config = Arc::new(RwLock::new(config.clone()));
+    let history = Arc::new(Mutex::new(VecDeque::<HistoryEntry>::new()));
     let recording_flag = Arc::new(AtomicBool::new(false));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
@@ -110,14 +120,27 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
         }
     });
 
-    let output_config = config.clone();
+    let output_cfg = Arc::clone(&runtime_config);
+    let history_buf = Arc::clone(&history);
     tokio::spawn(async move {
         while let Some(text) = text_rx.recv().await {
             eprintln!("transcribed text: {}", text);
-            if let Err(err) = run_sound_hook(&output_config).await {
+            {
+                let mut history = history_buf.lock().await;
+                let max_entries = output_cfg.read().await.history.max_entries.max(1);
+                history.push_back(HistoryEntry {
+                    unix_ms: unix_now_ms(),
+                    text: text.clone(),
+                });
+                while history.len() > max_entries {
+                    history.pop_front();
+                }
+            }
+            let cfg = output_cfg.read().await.clone();
+            if let Err(err) = run_sound_hook(&cfg).await {
                 eprintln!("sound hook error: {err:#}");
             }
-            if let Err(err) = run_output_hook(&text, &output_config).await {
+            if let Err(err) = run_output_hook(&text, &cfg).await {
                 eprintln!("output hook error: {err:#}");
             }
         }
@@ -127,12 +150,22 @@ pub async fn run(config: Config, socket_path: PathBuf) -> Result<()> {
         tokio::select! {
             res = listener.accept() => {
                 let (stream, _) = res?;
-                let config = config.clone();
+                let config_path = config_path.clone();
                 let state = Arc::clone(&state);
+                let runtime_config = Arc::clone(&runtime_config);
+                let history = Arc::clone(&history);
                 let recording_flag = Arc::clone(&recording_flag);
                 let shutdown_tx = shutdown_tx.clone();
                 tokio::spawn(async move {
-                    if let Err(err) = handle_client(stream, config, state, recording_flag, shutdown_tx).await {
+                    if let Err(err) = handle_client(
+                        stream,
+                        config_path,
+                        state,
+                        runtime_config,
+                        history,
+                        recording_flag,
+                        shutdown_tx,
+                    ).await {
                         eprintln!("client error: {err:#}");
                     }
                 });
@@ -184,8 +217,10 @@ pub fn parse_granularity(
 
 async fn handle_client(
     stream: UnixStream,
-    config: Config,
+    config_path: PathBuf,
     state: Arc<Mutex<DaemonState>>,
+    runtime_config: Arc<RwLock<Config>>,
+    history: Arc<Mutex<VecDeque<HistoryEntry>>>,
     recording_flag: Arc<AtomicBool>,
     shutdown_tx: watch::Sender<bool>,
 ) -> Result<()> {
@@ -193,7 +228,16 @@ async fn handle_client(
     let mut lines = BufReader::new(reader).lines();
 
     if let Some(line) = lines.next_line().await? {
-        let response = handle_command(line, &config, &state, &recording_flag, &shutdown_tx).await?;
+        let response = handle_command(
+            line,
+            &config_path,
+            &state,
+            &runtime_config,
+            &history,
+            &recording_flag,
+            &shutdown_tx,
+        )
+        .await?;
         writer.write_all(response.as_bytes()).await?;
     }
     Ok(())
@@ -201,8 +245,10 @@ async fn handle_client(
 
 async fn handle_command(
     line: String,
-    config: &Config,
+    config_path: &PathBuf,
     state: &Arc<Mutex<DaemonState>>,
+    runtime_config: &Arc<RwLock<Config>>,
+    history: &Arc<Mutex<VecDeque<HistoryEntry>>>,
     recording_flag: &Arc<AtomicBool>,
     shutdown_tx: &watch::Sender<bool>,
 ) -> Result<String> {
@@ -236,8 +282,35 @@ async fn handle_command(
         let _ = shutdown_tx.send(true);
         return Ok("OK shutting_down=true".to_string());
     }
+    if trimmed.eq_ignore_ascii_case("RELOAD") {
+        let loaded = crate::config::load_config(config_path)?;
+        *runtime_config.write().await = loaded;
+        return Ok(
+            "OK reloaded=true note=audio_vad_model_changes_apply_on_daemon_restart".to_string(),
+        );
+    }
+    if let Some(rest) = trimmed.strip_prefix("HISTORY") {
+        let limit = rest
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(20)
+            .max(1);
+        let history = history.lock().await;
+        let mut out = String::from("OK");
+        for item in history.iter().rev().take(limit).rev() {
+            out.push('\n');
+            out.push_str(&format!(
+                "{}\t{}",
+                item.unix_ms,
+                item.text.replace('\n', " ").trim()
+            ));
+        }
+        return Ok(out);
+    }
     if let Some(rest) = trimmed.strip_prefix("TEXT ") {
-        run_output_hook(rest, config).await?;
+        let cfg = runtime_config.read().await.clone();
+        run_output_hook(rest, &cfg).await?;
         return Ok("OK".to_string());
     }
     Ok("ERR unknown command".to_string())
@@ -370,4 +443,11 @@ fn builtin_tone_samples() -> &'static [f32] {
         }
         data
     })
+}
+
+fn unix_now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
