@@ -11,9 +11,12 @@ It captures microphone audio, segments speech with VAD, transcribes with a local
 - VAD-based chunking (Silero) with configurable thresholds/timings
 - Background daemon with UNIX socket IPC
 - `toggle` auto-starts daemon if it is not running
+- Runtime config reload for hook/history settings
+- In-memory transcription history (`voice-cmd history`)
 - Optional Wayland overlay indicator (`voice-cmd-overlay`)
 - Configurable output command and sound hook
 - Model prefetch command: `voice-cmd model fetch`
+- Built-in diagnostics (`voice-cmd doctor`)
 
 ## Requirements
 
@@ -105,11 +108,15 @@ voice-cmd start          Start recording
 voice-cmd stop           Stop recording
 voice-cmd status         Recording status
 voice-cmd daemon-status  Daemon reachability + status
+voice-cmd reload         Reload runtime config in daemon
+voice-cmd history        Show recent transcriptions
+voice-cmd doctor         Print diagnostics
 voice-cmd send <text>    Send text directly to output hook
 voice-cmd shutdown       Stop daemon
 voice-cmd config         Print config path
 voice-cmd model fetch    Download model
 voice-cmd model status   Show model readiness
+voice-cmd audio devices  List available input devices
 ```
 
 Overlay command:
@@ -131,8 +138,10 @@ Important sections:
 - `[model]`: model path, quantization, download URL
 - `[vad]`: speech detection and silence timing
 - `[audio]`: frame size/sample settings
+- `[audio.input_device]`: optional input device name (exact or partial match)
 - `[output]`: command with `{text}` placeholder
 - `[sound]`: audio feedback command / builtin tone behavior
+- `[history]`: in-memory history size
 - `[ipc]`: custom socket path
 
 ## Notes
@@ -140,6 +149,18 @@ Important sections:
 - Default socket: `$XDG_RUNTIME_DIR/voice-cmd.sock` (fallback `/tmp/voice-cmd.sock`)
 - Daemon logs when forked: `~/.local/state/voice-cmd/daemon.log`
 - Overlay logs when daemonized: `~/.local/state/voice-cmd/overlay.log`
+
+## Release Automation (mise)
+
+```bash
+mise run release-build
+mise run release-checksums
+mise run release-package
+# or everything:
+mise run release-all
+```
+
+Artifacts are written to `dist/`.
 
 ## License
 

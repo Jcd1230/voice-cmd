@@ -21,3 +21,17 @@ run = "cargo build --bin voice-cmd-overlay && mkdir -p ~/.local/bin && cp target
 
 [tasks.install-all]
 depends = ["install-local", "install-overlay"]
+
+[tasks.release-build]
+run = "cargo build --release --bin voice-cmd --bin voice-cmd-overlay"
+
+[tasks.release-checksums]
+depends = ["release-build"]
+run = "mkdir -p dist && sha256sum target/release/voice-cmd target/release/voice-cmd-overlay > dist/voice-cmd-SHA256SUMS.txt"
+
+[tasks.release-package]
+depends = ["release-checksums"]
+run = "mkdir -p dist && tar -C target/release -czf dist/voice-cmd-linux-x86_64.tar.gz voice-cmd voice-cmd-overlay"
+
+[tasks.release-all]
+depends = ["release-package"]
