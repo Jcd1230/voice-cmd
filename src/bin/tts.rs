@@ -87,6 +87,12 @@ struct TtsBackendConfig {
     voice: Option<String>,
     language: Option<String>,
     speaker: Option<u32>,
+    #[serde(default)]
+    model_url: Option<String>,
+    #[serde(default)]
+    config_url: Option<String>,
+    #[serde(default)]
+    voice_url: Option<String>,
 }
 
 impl Default for TtsBackendConfig {
@@ -98,6 +104,9 @@ impl Default for TtsBackendConfig {
             voice: None,
             language: None,
             speaker: None,
+            model_url: Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx".to_string()),
+            config_url: Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json".to_string()),
+            voice_url: None,
         }
     }
 }
@@ -130,6 +139,9 @@ fn default_kokoro_backend() -> TtsBackendConfig {
         voice: None,
         language: None,
         speaker: None,
+        model_url: Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx".to_string()),
+        config_url: None,
+        voice_url: Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/af_bella.bin".to_string()),
     }
 }
 
@@ -187,6 +199,97 @@ fn backend_cfg<'a>(engine: Engine, cfg: &'a TtsConfig) -> &'a TtsBackendConfig {
     }
 }
 
+fn default_backend_paths(engine: Engine) -> Result<(PathBuf, Option<PathBuf>, Option<PathBuf>)> {
+    let proj = ProjectDirs::from("io", "voice-cmd", "voice-cmd")
+        .context("failed to resolve data directory")?;
+    let model_root = proj.data_dir().join("models").join("tts");
+    match engine {
+        Engine::Piper => {
+            let model = model_root.join("piper").join("en_US-lessac-medium.onnx");
+            let cfg = PathBuf::from(format!("{}.json", model.display()));
+            Ok((model, Some(cfg), None))
+        }
+        Engine::Kokoro => {
+            let model = model_root.join("kokoro").join("model_q8f16.onnx");
+            let voice = model_root.join("kokoro").join("af_bella.bin");
+            Ok((model, None, Some(voice)))
+        }
+    }
+}
+
+fn download_to_path(url: &str, dest: &Path) -> Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create destination directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    eprintln!("tts: downloading {} -> {}", url, dest.display());
+    let response = ureq::get(url)
+        .call()
+        .map_err(|err| anyhow::anyhow!("failed to download {url}: {err}"))?;
+    let mut tmp = NamedTempFile::new_in(
+        dest.parent()
+            .ok_or_else(|| anyhow::anyhow!("invalid destination path"))?,
+    )
+    .context("failed to create temporary download file")?;
+    let mut reader = response.into_reader();
+    std::io::copy(&mut reader, &mut tmp).context("failed to write downloaded file")?;
+    tmp.persist(dest)
+        .map_err(|e| anyhow::anyhow!("failed to persist file: {}", e.error))?;
+    Ok(())
+}
+
+fn ensure_backend_assets(engine: Engine, cfg: &TtsBackendConfig) -> Result<TtsBackendConfig> {
+    let mut out = cfg.clone();
+    let (default_model, default_cfg_json, default_voice) = default_backend_paths(engine)?;
+    let model_path = out.model_path.clone().unwrap_or(default_model);
+    if !model_path.exists() {
+        let model_url = out
+            .model_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("missing model and no model_url configured"))?;
+        download_to_path(model_url, &model_path)?;
+    }
+    out.model_path = Some(model_path.clone());
+
+    if matches!(engine, Engine::Piper) {
+        let cfg_path = PathBuf::from(format!("{}.json", model_path.display()));
+        if !cfg_path.exists() {
+            if let Some(url) = out.config_url.as_deref() {
+                download_to_path(url, &cfg_path)?;
+            } else if let Some(fallback) = default_cfg_json {
+                if fallback != cfg_path && fallback.exists() {
+                    std::fs::copy(&fallback, &cfg_path).with_context(|| {
+                        format!(
+                            "failed to copy piper config {} -> {}",
+                            fallback.display(),
+                            cfg_path.display()
+                        )
+                    })?;
+                }
+            }
+        }
+    }
+
+    if matches!(engine, Engine::Kokoro) {
+        let voices_path = out.voices_path.clone().or(default_voice);
+        if let Some(voices_path) = voices_path {
+            if !voices_path.exists() {
+                let voice_url = out.voice_url.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("kokoro voices missing and no voice_url configured")
+                })?;
+                download_to_path(voice_url, &voices_path)?;
+            }
+            out.voices_path = Some(voices_path);
+        }
+    }
+
+    Ok(out)
+}
+
 fn render_template(input: &str, vars: &HashMap<&str, String>) -> String {
     let mut out = input.to_string();
     for (k, v) in vars {
@@ -202,8 +305,8 @@ fn run_backend(
     text: &str,
     output_wav: &Path,
 ) -> Result<()> {
-    if matches!(engine, Engine::Piper) && cfg.model_path.is_none() {
-        bail!("piper backend requires tts.piper.model_path in config");
+    if cfg.model_path.is_none() {
+        bail!("tts backend requires model_path after asset setup");
     }
     if cfg.command.trim().is_empty() {
         bail!(
@@ -331,7 +434,8 @@ fn main() -> Result<()> {
     tmp.flush().ok();
 
     let backend = backend_cfg(engine, &tts_cfg);
-    run_backend(engine, backend, &text, &tmp_path)?;
+    let backend = ensure_backend_assets(engine, backend)?;
+    run_backend(engine, &backend, &text, &tmp_path)?;
 
     match output_mode {
         OutputMode::Pipewire => {

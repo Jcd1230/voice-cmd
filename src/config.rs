@@ -135,6 +135,12 @@ pub struct TtsBackendConfig {
     pub voice: Option<String>,
     pub language: Option<String>,
     pub speaker: Option<u32>,
+    #[serde(default)]
+    pub model_url: Option<String>,
+    #[serde(default)]
+    pub config_url: Option<String>,
+    #[serde(default)]
+    pub voice_url: Option<String>,
 }
 
 impl Default for TtsBackendConfig {
@@ -146,6 +152,9 @@ impl Default for TtsBackendConfig {
             voice: None,
             language: None,
             speaker: None,
+            model_url: default_tts_piper_model_url(),
+            config_url: default_tts_piper_config_url(),
+            voice_url: None,
         }
     }
 }
@@ -263,7 +272,26 @@ fn default_kokoro_backend() -> TtsBackendConfig {
         voice: None,
         language: None,
         speaker: None,
+        model_url: default_tts_kokoro_model_url(),
+        config_url: None,
+        voice_url: default_tts_kokoro_voice_url(),
     }
+}
+
+fn default_tts_piper_model_url() -> Option<String> {
+    Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx".to_string())
+}
+
+fn default_tts_piper_config_url() -> Option<String> {
+    Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json".to_string())
+}
+
+fn default_tts_kokoro_model_url() -> Option<String> {
+    Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx".to_string())
+}
+
+fn default_tts_kokoro_voice_url() -> Option<String> {
+    Some("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/af_bella.bin".to_string())
 }
 
 pub fn config_path() -> Result<PathBuf> {
