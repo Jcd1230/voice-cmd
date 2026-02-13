@@ -5,6 +5,7 @@ use rodio::{Decoder, OutputStream, Sink};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::ErrorKind;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -305,6 +306,10 @@ fn run_backend(
     text: &str,
     output_wav: &Path,
 ) -> Result<()> {
+    let engine_name = match engine {
+        Engine::Piper => "piper",
+        Engine::Kokoro => "kokoro",
+    };
     if cfg.model_path.is_none() {
         bail!("tts backend requires model_path after asset setup");
     }
@@ -353,7 +358,17 @@ fn run_backend(
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().context("failed to start backend command")?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            bail!(
+                "tts backend executable not found (command='{}'). Install it or set tts.{}.command in config",
+                cfg.command.trim(),
+                engine_name
+            )
+        }
+        Err(err) => return Err(err).context("failed to start backend command"),
+    };
     if !cfg.command.contains("{text}") {
         if let Some(stdin) = child.stdin.as_mut() {
             stdin
