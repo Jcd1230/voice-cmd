@@ -154,8 +154,7 @@ fn default_kokoro_backend() -> TtsBackendConfig {
         language: None,
         speaker: None,
         model_url: Some(
-            "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.int8.onnx"
-                .to_string(),
+            "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.onnx".to_string(),
         ),
         runtime_url: None,
         config_url: None,
@@ -244,7 +243,7 @@ fn default_backend_paths(engine: Engine) -> Result<(PathBuf, Option<PathBuf>, Op
             Ok((model, Some(cfg), None))
         }
         Engine::Kokoro => {
-            let model = model_root.join("kokoro").join("kokoro-v1.0.int8.onnx");
+            let model = model_root.join("kokoro").join("kokoro-v1.0.onnx");
             let voice = model_root.join("kokoro").join("voices.bin");
             Ok((model, None, Some(voice)))
         }
@@ -279,6 +278,18 @@ fn download_to_path(url: &str, dest: &Path) -> Result<()> {
 fn ensure_backend_assets(engine: Engine, cfg: &TtsBackendConfig) -> Result<TtsBackendConfig> {
     let mut out = cfg.clone();
     let (default_model, default_cfg_json, default_voice) = default_backend_paths(engine)?;
+    if matches!(engine, Engine::Kokoro)
+        && out.model_path.is_none()
+        && out
+            .model_url
+            .as_deref()
+            .map(|u| u.contains("kokoro-v1.0.int8.onnx"))
+            .unwrap_or(false)
+    {
+        out.model_url = Some(
+            "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.onnx".to_string(),
+        );
+    }
     let model_path = out.model_path.clone().unwrap_or(default_model);
     if !model_path.exists() {
         let model_url = out

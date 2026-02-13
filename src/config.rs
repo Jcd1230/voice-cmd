@@ -308,10 +308,7 @@ fn default_tts_piper_runtime_url() -> Option<String> {
 }
 
 fn default_tts_kokoro_model_url() -> Option<String> {
-    Some(
-        "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.int8.onnx"
-            .to_string(),
-    )
+    Some("https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.onnx".to_string())
 }
 
 fn default_tts_kokoro_voice_url() -> Option<String> {
