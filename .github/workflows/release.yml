@@ -26,6 +26,7 @@ jobs:
             meson \
             ninja-build \
             git \
+            valac \
             libglib2.0-dev \
             gobject-introspection \
             libgirepository1.0-dev \
