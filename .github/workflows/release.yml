@@ -11,38 +11,27 @@ permissions:
 
 jobs:
   release-linux-x64:
-    name: Build and Release (linux-x64)
+    name: Build and Release voice-cmd (linux-x64)
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libgtk-4-dev libgtk4-layer-shell-dev
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release binaries
-        run: cargo build --release --bin voice-cmd --bin voice-cmd-overlay --bin voice-cmd-tts
+      - name: Build release binary
+        run: cargo build --release --bin voice-cmd
 
       - name: Package release assets
         run: |
           mkdir -p dist
           cp target/release/voice-cmd dist/voice-cmd
-          cp target/release/voice-cmd-overlay dist/voice-cmd-overlay
-          cp target/release/voice-cmd-tts dist/voice-cmd-tts
 
           tar -C dist -czf dist/voice-cmd-linux-x64.tar.gz voice-cmd
-          tar -C dist -czf dist/voice-cmd-overlay-linux-x64.tar.gz voice-cmd-overlay
-          tar -C dist -czf dist/voice-cmd-tts-linux-x64.tar.gz voice-cmd-tts
 
           (cd dist && sha256sum \
             voice-cmd-linux-x64.tar.gz \
-            voice-cmd-overlay-linux-x64.tar.gz \
-            voice-cmd-tts-linux-x64.tar.gz \
           > voice-cmd-linux-x64-checksums.txt)
 
       - name: Upload release assets
@@ -50,6 +39,4 @@ jobs:
         with:
           files: |
             dist/voice-cmd-linux-x64.tar.gz
-            dist/voice-cmd-overlay-linux-x64.tar.gz
-            dist/voice-cmd-tts-linux-x64.tar.gz
             dist/voice-cmd-linux-x64-checksums.txt
