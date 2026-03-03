@@ -27,6 +27,7 @@ jobs:
             rust \
             cargo \
             pkgconf \
+            alsa-lib \
             gtk4 \
             gtk4-layer-shell
 
