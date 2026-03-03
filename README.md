@@ -43,6 +43,12 @@ If this repo publishes prebuilt GitHub release assets:
 mise use -g github:Jcd1230/voice-cmd
 ```
 
+Release assets are produced by GitHub Actions on tag push (`v*`) as:
+
+- `voice-cmd-linux-x64.tar.gz` (primary CLI for `mise` GitHub backend)
+- `voice-cmd-overlay-linux-x64.tar.gz`
+- `voice-cmd-tts-linux-x64.tar.gz`
+
 ### Option 2: `mise` cargo backend (build from source)
 
 ```bash
@@ -162,6 +168,15 @@ mise run release-all
 ```
 
 Artifacts are written to `dist/`.
+
+## GitHub Release Pipeline
+
+GitHub Actions publishes release assets on tags matching `v*`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## License
 
