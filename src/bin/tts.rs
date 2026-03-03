@@ -1,10 +1,10 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
+use core_config::{self, TtsBackendConfig, TtsConfig};
 use directories::ProjectDirs;
 use flate2::read::GzDecoder;
 use kokoro_tts::{KokoroTts, Voice as KokoroVoice};
 use rodio::{Decoder, OutputStream, Sink};
-use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
@@ -85,133 +85,6 @@ enum PiperPreset {
     Masculine,
     Natural,
     Crisp,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RootConfig {
-    #[serde(default)]
-    tts: TtsConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TtsConfig {
-    #[serde(default = "default_engine")]
-    engine: String,
-    #[serde(default = "default_output_mode")]
-    output_mode: String,
-    output_path: Option<PathBuf>,
-    #[serde(default)]
-    piper: TtsBackendConfig,
-    #[serde(default = "default_kokoro_backend")]
-    kokoro: TtsBackendConfig,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct TtsBackendConfig {
-    #[serde(default)]
-    command: String,
-    model_path: Option<PathBuf>,
-    runtime_path: Option<PathBuf>,
-    voices_path: Option<PathBuf>,
-    voice: Option<String>,
-    language: Option<String>,
-    speaker: Option<u32>,
-    #[serde(default)]
-    model_url: Option<String>,
-    #[serde(default)]
-    runtime_url: Option<String>,
-    #[serde(default)]
-    config_url: Option<String>,
-    #[serde(default)]
-    voice_url: Option<String>,
-}
-
-impl Default for TtsBackendConfig {
-    fn default() -> Self {
-        Self {
-            command: String::new(),
-            model_path: None,
-            runtime_path: None,
-            voices_path: None,
-            voice: None,
-            language: None,
-            speaker: None,
-            model_url: Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx".to_string()),
-            runtime_url: default_piper_runtime_url(),
-            config_url: Some("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json".to_string()),
-            voice_url: None,
-        }
-    }
-}
-
-impl Default for TtsConfig {
-    fn default() -> Self {
-        Self {
-            engine: default_engine(),
-            output_mode: default_output_mode(),
-            output_path: None,
-            piper: TtsBackendConfig::default(),
-            kokoro: default_kokoro_backend(),
-        }
-    }
-}
-
-fn default_engine() -> String {
-    "piper".to_string()
-}
-
-fn default_output_mode() -> String {
-    "pipewire".to_string()
-}
-
-fn default_kokoro_backend() -> TtsBackendConfig {
-    TtsBackendConfig {
-        command: String::new(),
-        model_path: None,
-        runtime_path: None,
-        voices_path: None,
-        voice: Some("af_bella".to_string()),
-        language: None,
-        speaker: None,
-        model_url: Some(
-            "https://github.com/mzdk100/kokoro/releases/download/V1.0/kokoro-v1.0.onnx".to_string(),
-        ),
-        runtime_url: None,
-        config_url: None,
-        voice_url: Some(
-            "https://github.com/mzdk100/kokoro/releases/download/V1.0/voices.bin".to_string(),
-        ),
-    }
-}
-
-fn default_piper_runtime_url() -> Option<String> {
-    match std::env::consts::ARCH {
-        "x86_64" => Some(
-            "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz"
-                .to_string(),
-        ),
-        "aarch64" => Some(
-            "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_aarch64.tar.gz"
-                .to_string(),
-        ),
-        _ => None,
-    }
-}
-
-fn default_config_path() -> Result<PathBuf> {
-    let proj = ProjectDirs::from("io", "voice-cmd", "voice-cmd")
-        .context("failed to resolve config directory")?;
-    Ok(proj.config_dir().join("config.toml"))
-}
-
-fn load_config(path: &Path) -> Result<TtsConfig> {
-    if !path.exists() {
-        return Ok(TtsConfig::default());
-    }
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read config at {}", path.display()))?;
-    let parsed: RootConfig = toml::from_str(&content).context("failed to parse config")?;
-    Ok(parsed.tts)
 }
 
 fn parse_engine(value: &str) -> Result<Engine> {
@@ -415,31 +288,6 @@ fn default_backend_paths(engine: Engine) -> Result<(PathBuf, Option<PathBuf>, Op
     }
 }
 
-fn download_to_path(url: &str, dest: &Path) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create destination directory {}",
-                parent.display()
-            )
-        })?;
-    }
-    eprintln!("tts: downloading {} -> {}", url, dest.display());
-    let response = ureq::get(url)
-        .call()
-        .map_err(|err| anyhow::anyhow!("failed to download {url}: {err}"))?;
-    let mut tmp = NamedTempFile::new_in(
-        dest.parent()
-            .ok_or_else(|| anyhow::anyhow!("invalid destination path"))?,
-    )
-    .context("failed to create temporary download file")?;
-    let mut reader = response.into_reader();
-    std::io::copy(&mut reader, &mut tmp).context("failed to write downloaded file")?;
-    tmp.persist(dest)
-        .map_err(|e| anyhow::anyhow!("failed to persist file: {}", e.error))?;
-    Ok(())
-}
-
 fn ensure_backend_assets(engine: Engine, cfg: &TtsBackendConfig) -> Result<TtsBackendConfig> {
     let mut out = cfg.clone();
     let (default_model, default_cfg_json, default_voice) = default_backend_paths(engine)?;
@@ -461,7 +309,7 @@ fn ensure_backend_assets(engine: Engine, cfg: &TtsBackendConfig) -> Result<TtsBa
             .model_url
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("missing model and no model_url configured"))?;
-        download_to_path(model_url, &model_path)?;
+        core_assets::download_to_path(model_url, &model_path)?;
     }
     out.model_path = Some(model_path.clone());
 
@@ -469,7 +317,7 @@ fn ensure_backend_assets(engine: Engine, cfg: &TtsBackendConfig) -> Result<TtsBa
         let cfg_path = PathBuf::from(format!("{}.json", model_path.display()));
         if !cfg_path.exists() {
             if let Some(url) = out.config_url.as_deref() {
-                download_to_path(url, &cfg_path)?;
+                core_assets::download_to_path(url, &cfg_path)?;
             } else if let Some(fallback) = default_cfg_json {
                 if fallback != cfg_path && fallback.exists() {
                     std::fs::copy(&fallback, &cfg_path).with_context(|| {
@@ -491,7 +339,7 @@ fn ensure_backend_assets(engine: Engine, cfg: &TtsBackendConfig) -> Result<TtsBa
                 let voice_url = out.voice_url.as_deref().ok_or_else(|| {
                     anyhow::anyhow!("kokoro voices missing and no voice_url configured")
                 })?;
-                download_to_path(voice_url, &voices_path)?;
+                core_assets::download_to_path(voice_url, &voices_path)?;
             }
             out.voices_path = Some(voices_path);
         }
@@ -840,9 +688,9 @@ fn main() -> Result<()> {
     let config_path = if let Some(path) = cli.config.clone() {
         path
     } else {
-        default_config_path()?
+        core_config::config_path()?
     };
-    let tts_cfg = load_config(&config_path)?;
+    let tts_cfg = core_config::load_config(&config_path)?.tts;
     if cli.doctor {
         run_doctor(&cli, &config_path, &tts_cfg)?;
         return Ok(());

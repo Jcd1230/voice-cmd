@@ -7,13 +7,13 @@ mod vad;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use directories::ProjectDirs;
-use std::io::Write;
+use core_errors::{ErrorCode, format_error};
+use core_ipc::Request;
+use core_logging::{append_log_line, daemon_log_path};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -157,9 +157,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(ipc::default_socket_path);
             if fork {
                 let exe = std::env::current_exe()?;
-                let log_path = ProjectDirs::from("io", "voice-cmd", "voice-cmd")
-                    .and_then(|proj| proj.state_dir().map(|dir| dir.join("daemon.log")))
-                    .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-daemon.log"));
+                let log_path = daemon_log_path();
                 if let Some(parent) = log_path.parent() {
                     std::fs::create_dir_all(parent).context("failed to create log directory")?;
                 }
@@ -207,22 +205,22 @@ async fn main() -> Result<()> {
         }
         Commands::Start { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, "START").await?;
+            let response = ipc::send_request(&socket_path, &Request::Start).await?;
             println!("{response}");
         }
         Commands::Stop { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, "STOP").await?;
+            let response = ipc::send_request(&socket_path, &Request::Stop).await?;
             println!("{response}");
         }
         Commands::Status { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, "STATUS").await?;
+            let response = ipc::send_request(&socket_path, &Request::Status).await?;
             println!("{response}");
         }
         Commands::DaemonStatus { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            match ipc::send_command(&socket_path, "STATUS").await {
+            match ipc::send_request(&socket_path, &Request::Status).await {
                 Ok(response) => {
                     println!("running=true");
                     println!("{response}");
@@ -236,23 +234,22 @@ async fn main() -> Result<()> {
         }
         Commands::Send { text, socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let command = format!("TEXT {text}");
-            let response = ipc::send_command(&socket_path, &command).await?;
+            let response = ipc::send_request(&socket_path, &Request::SendText { text }).await?;
             println!("{response}");
         }
         Commands::Shutdown { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, "SHUTDOWN").await?;
+            let response = ipc::send_request(&socket_path, &Request::Shutdown).await?;
             println!("{response}");
         }
         Commands::Reload { socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, "RELOAD").await?;
+            let response = ipc::send_request(&socket_path, &Request::Reload).await?;
             println!("{response}");
         }
         Commands::History { limit, socket } => {
             let socket_path = socket.unwrap_or_else(ipc::default_socket_path);
-            let response = ipc::send_command(&socket_path, &format!("HISTORY {limit}")).await?;
+            let response = ipc::send_request(&socket_path, &Request::History { limit }).await?;
             println!("{response}");
         }
         Commands::Doctor { socket } => {
@@ -333,7 +330,7 @@ async fn run_doctor(socket: Option<PathBuf>) -> Result<()> {
         timestamp_granularity: daemon::parse_granularity(&cfg.model.timestamp_granularity)?,
         download_url: cfg.model.download_url.clone(),
     });
-    let daemon_status = ipc::send_command(&socket_path, "STATUS").await.ok();
+    let daemon_status = ipc::send_request(&socket_path, &Request::Status).await.ok();
     let ydotool_ok = StdCommand::new("sh")
         .arg("-lc")
         .arg("command -v ydotool >/dev/null 2>&1")
@@ -365,7 +362,7 @@ async fn run_doctor(socket: Option<PathBuf>) -> Result<()> {
 }
 
 async fn send_toggle_with_autostart(socket_path: &PathBuf) -> Result<String> {
-    match ipc::send_command(socket_path, "TOGGLE").await {
+    match ipc::send_request(socket_path, &Request::Toggle).await {
         Ok(response) => return Ok(response),
         Err(err) => {
             eprintln!(
@@ -379,7 +376,7 @@ async fn send_toggle_with_autostart(socket_path: &PathBuf) -> Result<String> {
 
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if let Ok(response) = ipc::send_command(socket_path, "TOGGLE").await {
+        if let Ok(response) = ipc::send_request(socket_path, &Request::Toggle).await {
             return Ok(response);
         }
     }
@@ -452,11 +449,15 @@ fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
     }
 
     if attempts.is_empty() {
-        Err(anyhow::anyhow!("could not find an overlay executable"))
+        Err(anyhow::anyhow!(format_error(
+            ErrorCode::Overlay,
+            "could not find an overlay executable"
+        )))
     } else {
         let log_path = overlay_launch_log_path();
         Err(anyhow::anyhow!(
-            "could not launch overlay executable; attempts: {}; log={}",
+            "{}; attempts: {}; log={}",
+            format_error(ErrorCode::Overlay, "could not launch overlay executable"),
             attempts.join(", "),
             log_path.display()
         ))
@@ -488,27 +489,11 @@ fn overlay_candidates(current_exe: Option<&PathBuf>) -> Vec<PathBuf> {
 }
 
 fn overlay_launch_log_path() -> PathBuf {
-    ProjectDirs::from("io", "voice-cmd", "voice-cmd")
-        .and_then(|proj| proj.state_dir().map(|dir| dir.join("overlay-launch.log")))
-        .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-overlay-launch.log"))
+    core_logging::overlay_launch_log_path()
 }
 
 fn log_overlay_launch(message: &str) {
-    let path = overlay_launch_log_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(file, "[{}] {}", ts, message);
-    }
+    append_log_line(&overlay_launch_log_path(), message);
 }
 
 #[cfg(test)]

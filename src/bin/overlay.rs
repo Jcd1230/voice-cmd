@@ -17,10 +17,7 @@ struct Args {
 }
 
 fn default_socket_path() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("voice-cmd.sock");
-    }
-    PathBuf::from("/tmp/voice-cmd.sock")
+    core_ipc::default_socket_path()
 }
 
 fn print_usage() {
@@ -64,9 +61,7 @@ fn parse_args() -> Args {
 
 fn daemonize(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
-    let log_path = directories::ProjectDirs::from("io", "voice-cmd", "voice-cmd")
-        .and_then(|proj| proj.state_dir().map(|dir| dir.join("overlay.log")))
-        .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-overlay.log"));
+    let log_path = core_logging::overlay_log_path();
 
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;

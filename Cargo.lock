@@ -402,6 +402,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
+ "ureq 2.12.1",
+]
+
+[[package]]
+name = "core-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "core-errors"
+version = "0.1.0"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -416,6 +439,22 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "core-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "core-logging"
+version = "0.1.0"
+dependencies = [
+ "directories",
+]
 
 [[package]]
 name = "core2"
@@ -3138,6 +3177,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "core-assets",
+ "core-config",
+ "core-errors",
+ "core-ipc",
+ "core-logging",
  "cpal",
  "directories",
  "flate2",
@@ -3148,13 +3192,11 @@ dependencies = [
  "libc",
  "rodio",
  "rubato",
- "serde",
  "serde_json",
  "shell-words",
  "tar",
  "tempfile",
  "tokio",
- "toml",
  "transcribe-rs",
  "ureq 2.12.1",
  "vad-rs",

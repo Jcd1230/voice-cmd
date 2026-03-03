@@ -1,3 +1,14 @@
+[workspace]
+members = [
+  ".",
+  "crates/core-assets",
+  "crates/core-config",
+  "crates/core-errors",
+  "crates/core-ipc",
+  "crates/core-logging",
+]
+resolver = "2"
+
 [package]
 name = "voice-cmd"
 version = "0.1.0"
@@ -20,13 +31,11 @@ cpal = "0.15"
 directories = "5.0"
 flate2 = "1.0"
 libc = "0.2"
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 shell-words = "1.1"
 tar = "0.4"
 tempfile = "3.12"
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "io-util", "fs", "process"] }
-toml = "0.8"
 transcribe-rs = { version = "0.2", features = ["parakeet"] }
 ureq = "2.12"
 gtk4 = "0.8"
@@ -36,3 +45,8 @@ rubato = "0.16"
 rodio = "0.20"
 kokoro-tts = { version = "0.3.1", features = ["use-cmudict"] }
 hound = "3.5"
+core-assets = { path = "crates/core-assets" }
+core-config = { path = "crates/core-config" }
+core-errors = { path = "crates/core-errors" }
+core-ipc = { path = "crates/core-ipc" }
+core-logging = { path = "crates/core-logging" }

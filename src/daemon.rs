@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::transcription::{Transcriber, TranscriptionConfig};
 use crate::vad::{self, VadConfig};
 use anyhow::{Context, Result};
+use core_ipc::Request;
 use cpal::traits::StreamTrait;
 use rodio::{OutputStream, Sink, buffer::SamplesBuffer};
 use shell_words;
@@ -252,68 +253,64 @@ async fn handle_command(
     recording_flag: &Arc<AtomicBool>,
     shutdown_tx: &watch::Sender<bool>,
 ) -> Result<String> {
-    let trimmed = line.trim();
-    if trimmed.eq_ignore_ascii_case("TOGGLE") {
-        let mut state = state.lock().await;
-        state.recording = !state.recording;
-        recording_flag.store(state.recording, Ordering::Relaxed);
-        eprintln!("recording toggled: {}", state.recording);
-        return Ok(format!("OK recording={}", state.recording));
-    }
-    if trimmed.eq_ignore_ascii_case("START") {
-        let mut state = state.lock().await;
-        state.recording = true;
-        recording_flag.store(true, Ordering::Relaxed);
-        eprintln!("recording started");
-        return Ok("OK recording=true".to_string());
-    }
-    if trimmed.eq_ignore_ascii_case("STOP") {
-        let mut state = state.lock().await;
-        state.recording = false;
-        recording_flag.store(false, Ordering::Relaxed);
-        eprintln!("recording stopped");
-        return Ok("OK recording=false".to_string());
-    }
-    if trimmed.eq_ignore_ascii_case("STATUS") {
-        let state = state.lock().await;
-        return Ok(format!("OK recording={}", state.recording));
-    }
-    if trimmed.eq_ignore_ascii_case("SHUTDOWN") {
-        let _ = shutdown_tx.send(true);
-        return Ok("OK shutting_down=true".to_string());
-    }
-    if trimmed.eq_ignore_ascii_case("RELOAD") {
-        let loaded = crate::config::load_config(config_path)?;
-        *runtime_config.write().await = loaded;
-        return Ok(
-            "OK reloaded=true note=audio_vad_model_changes_apply_on_daemon_restart".to_string(),
-        );
-    }
-    if let Some(rest) = trimmed.strip_prefix("HISTORY") {
-        let limit = rest
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(20)
-            .max(1);
-        let history = history.lock().await;
-        let mut out = String::from("OK");
-        for item in history.iter().rev().take(limit).rev() {
-            out.push('\n');
-            out.push_str(&format!(
-                "{}\t{}",
-                item.unix_ms,
-                item.text.replace('\n', " ").trim()
-            ));
+    let Some(request) = Request::parse_legacy(line.trim()) else {
+        return Ok("ERR unknown command".to_string());
+    };
+
+    match request {
+        Request::Toggle => {
+            let mut state = state.lock().await;
+            state.recording = !state.recording;
+            recording_flag.store(state.recording, Ordering::Relaxed);
+            eprintln!("recording toggled: {}", state.recording);
+            Ok(format!("OK recording={}", state.recording))
         }
-        return Ok(out);
+        Request::Start => {
+            let mut state = state.lock().await;
+            state.recording = true;
+            recording_flag.store(true, Ordering::Relaxed);
+            eprintln!("recording started");
+            Ok("OK recording=true".to_string())
+        }
+        Request::Stop => {
+            let mut state = state.lock().await;
+            state.recording = false;
+            recording_flag.store(false, Ordering::Relaxed);
+            eprintln!("recording stopped");
+            Ok("OK recording=false".to_string())
+        }
+        Request::Status => {
+            let state = state.lock().await;
+            Ok(format!("OK recording={}", state.recording))
+        }
+        Request::Shutdown => {
+            let _ = shutdown_tx.send(true);
+            Ok("OK shutting_down=true".to_string())
+        }
+        Request::Reload => {
+            let loaded = crate::config::load_config(config_path)?;
+            *runtime_config.write().await = loaded;
+            Ok("OK reloaded=true note=audio_vad_model_changes_apply_on_daemon_restart".to_string())
+        }
+        Request::History { limit } => {
+            let history = history.lock().await;
+            let mut out = String::from("OK");
+            for item in history.iter().rev().take(limit).rev() {
+                out.push('\n');
+                out.push_str(&format!(
+                    "{}\t{}",
+                    item.unix_ms,
+                    item.text.replace('\n', " ").trim()
+                ));
+            }
+            Ok(out)
+        }
+        Request::SendText { text } => {
+            let cfg = runtime_config.read().await.clone();
+            run_output_hook(&text, &cfg).await?;
+            Ok("OK".to_string())
+        }
     }
-    if let Some(rest) = trimmed.strip_prefix("TEXT ") {
-        let cfg = runtime_config.read().await.clone();
-        run_output_hook(rest, &cfg).await?;
-        return Ok("OK".to_string());
-    }
-    Ok("ERR unknown command".to_string())
 }
 
 async fn run_output_hook(text: &str, config: &Config) -> Result<()> {
