@@ -19,10 +19,15 @@ repository = "https://github.com/Jcd1230/voice-cmd"
 [[bin]]
 name = "voice-cmd-overlay"
 path = "src/bin/overlay.rs"
+required-features = ["overlay"]
 
 [[bin]]
 name = "voice-cmd-tts"
 path = "src/bin/tts.rs"
+
+[features]
+default = []
+overlay = ["dep:gtk4", "dep:gtk4-layer-shell"]
 
 [dependencies]
 anyhow = "1.0"
@@ -38,8 +43,8 @@ tempfile = "3.12"
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "io-util", "fs", "process"] }
 transcribe-rs = { version = "0.2", features = ["parakeet"] }
 ureq = "2.12"
-gtk4 = "0.8"
-gtk4-layer-shell = "0.3"
+gtk4 = { version = "0.8", optional = true }
+gtk4-layer-shell = { version = "0.3", optional = true }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 rubato = "0.16"
 rodio = "0.20"

@@ -17,7 +17,7 @@ run = "cargo check"
 run = "cargo build && mkdir -p ~/.local/bin && cp target/debug/voice-cmd ~/.local/bin/voice-cmd.new && mv ~/.local/bin/voice-cmd.new ~/.local/bin/voice-cmd"
 
 [tasks.install-overlay]
-run = "cargo build --bin voice-cmd-overlay && mkdir -p ~/.local/bin && cp target/debug/voice-cmd-overlay ~/.local/bin/voice-cmd-overlay.new && mv ~/.local/bin/voice-cmd-overlay.new ~/.local/bin/voice-cmd-overlay"
+run = "cargo build --bin voice-cmd-overlay --features overlay && mkdir -p ~/.local/bin && cp target/debug/voice-cmd-overlay ~/.local/bin/voice-cmd-overlay.new && mv ~/.local/bin/voice-cmd-overlay.new ~/.local/bin/voice-cmd-overlay"
 
 [tasks.install-tts]
 run = "cargo build --bin voice-cmd-tts && mkdir -p ~/.local/bin && cp target/debug/voice-cmd-tts ~/.local/bin/voice-cmd-tts.new && mv ~/.local/bin/voice-cmd-tts.new ~/.local/bin/voice-cmd-tts"
@@ -26,7 +26,7 @@ run = "cargo build --bin voice-cmd-tts && mkdir -p ~/.local/bin && cp target/deb
 depends = ["install-local", "install-overlay", "install-tts"]
 
 [tasks.release-build]
-run = "cargo build --release --bin voice-cmd --bin voice-cmd-overlay --bin voice-cmd-tts"
+run = "cargo build --release --bin voice-cmd --bin voice-cmd-tts && cargo build --release --bin voice-cmd-overlay --features overlay"
 
 [tasks.release-checksums]
 depends = ["release-build"]
