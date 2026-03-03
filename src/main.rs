@@ -8,10 +8,12 @@ mod vad;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -404,15 +406,24 @@ fn start_daemon_in_background(socket_path: &PathBuf) -> Result<()> {
 }
 
 fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
-    let mut candidates = Vec::<PathBuf>::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            candidates.push(parent.join("voice-cmd-overlay"));
-        }
-    }
-    candidates.push(PathBuf::from("voice-cmd-overlay"));
+    let current_exe = std::env::current_exe().ok();
+    let candidates = overlay_candidates(current_exe.as_ref());
+    let mut attempts = Vec::new();
+    log_overlay_launch(&format!(
+        "spawn start: socket={} current_exe={} candidates={}",
+        socket_path.display(),
+        current_exe
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unavailable>".to_string()),
+        candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
 
-    for candidate in candidates {
+    for candidate in &candidates {
         let mut cmd = std::process::Command::new(&candidate);
         cmd.arg("--fg");
         cmd.arg("--socket");
@@ -421,10 +432,107 @@ fn spawn_overlay(socket_path: &PathBuf) -> Result<()> {
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
         match cmd.spawn() {
-            Ok(_) => return Ok(()),
-            Err(_) => continue,
+            Ok(_) => {
+                log_overlay_launch(&format!(
+                    "spawn success: candidate={} socket={}",
+                    candidate.display(),
+                    socket_path.display()
+                ));
+                return Ok(());
+            }
+            Err(err) => {
+                log_overlay_launch(&format!(
+                    "spawn failed: candidate={} error={err}",
+                    candidate.display()
+                ));
+                attempts.push(format!("{} ({err})", candidate.display()));
+                continue;
+            }
         }
     }
 
-    Err(anyhow::anyhow!("could not find an overlay executable"))
+    if attempts.is_empty() {
+        Err(anyhow::anyhow!("could not find an overlay executable"))
+    } else {
+        let log_path = overlay_launch_log_path();
+        Err(anyhow::anyhow!(
+            "could not launch overlay executable; attempts: {}; log={}",
+            attempts.join(", "),
+            log_path.display()
+        ))
+    }
+}
+
+fn overlay_candidates(current_exe: Option<&PathBuf>) -> Vec<PathBuf> {
+    let mut candidates = Vec::<PathBuf>::new();
+
+    let mut push_unique = |candidate: PathBuf| {
+        if !candidates.iter().any(|existing| *existing == candidate) {
+            candidates.push(candidate);
+        }
+    };
+
+    if let Some(exe) = current_exe {
+        if let Some(parent) = exe.parent() {
+            if let Some(exe_name) = exe.file_name().and_then(|name| name.to_str()) {
+                push_unique(parent.join(format!("{exe_name}-overlay")));
+            }
+            push_unique(parent.join("voicetext-overlay"));
+            push_unique(parent.join("voice-cmd-overlay"));
+        }
+    }
+
+    push_unique(PathBuf::from("voicetext-overlay"));
+    push_unique(PathBuf::from("voice-cmd-overlay"));
+    candidates
+}
+
+fn overlay_launch_log_path() -> PathBuf {
+    ProjectDirs::from("io", "voice-cmd", "voice-cmd")
+        .and_then(|proj| proj.state_dir().map(|dir| dir.join("overlay-launch.log")))
+        .unwrap_or_else(|| PathBuf::from("/tmp/voice-cmd-overlay-launch.log"))
+}
+
+fn log_overlay_launch(message: &str) {
+    let path = overlay_launch_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(file, "[{}] {}", ts, message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overlay_candidates;
+    use std::path::PathBuf;
+
+    #[test]
+    fn overlay_candidates_prioritize_matching_sibling_for_voicetext() {
+        let exe = PathBuf::from("/opt/bin/voicetext");
+        let candidates = overlay_candidates(Some(&exe));
+        assert_eq!(candidates[0], PathBuf::from("/opt/bin/voicetext-overlay"));
+        assert!(candidates.contains(&PathBuf::from("/opt/bin/voice-cmd-overlay")));
+        assert!(candidates.contains(&PathBuf::from("voicetext-overlay")));
+        assert!(candidates.contains(&PathBuf::from("voice-cmd-overlay")));
+    }
+
+    #[test]
+    fn overlay_candidates_prioritize_matching_sibling_for_voice_cmd() {
+        let exe = PathBuf::from("/opt/bin/voice-cmd");
+        let candidates = overlay_candidates(Some(&exe));
+        assert_eq!(candidates[0], PathBuf::from("/opt/bin/voice-cmd-overlay"));
+        assert!(candidates.contains(&PathBuf::from("/opt/bin/voicetext-overlay")));
+        assert!(candidates.contains(&PathBuf::from("voicetext-overlay")));
+        assert!(candidates.contains(&PathBuf::from("voice-cmd-overlay")));
+    }
 }
