@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub config_version: u32,
     pub model: ModelConfig,
     #[serde(default)]
     pub vad: VadConfig,
@@ -180,7 +179,6 @@ impl Default for TtsConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            config_version: 2,
             model: ModelConfig {
                 name: "parakeet-v2".to_string(),
                 path: default_model_path(),
