@@ -36,9 +36,10 @@ pub async fn run_segmenter(
     cfg: VadConfig,
     on_segment: UnboundedSender<Segment>,
     recording: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    energy_flag: std::sync::Arc<std::sync::atomic::AtomicU32>,
 ) -> Result<()> {
     if !cfg.enabled {
-        return run_passthrough(rx, cfg, on_segment, recording).await;
+        return run_passthrough(rx, cfg, on_segment, recording, energy_flag).await;
     }
 
     ensure_vad_model(&cfg.model_path, cfg.model_url.as_deref())?;
@@ -67,8 +68,12 @@ pub async fn run_segmenter(
                 &mut prefill,
                 &mut vad,
             );
+            energy_flag.store(0u32, std::sync::atomic::Ordering::Relaxed);
             continue;
         }
+
+        let energy = calculate_energy(&frame);
+        energy_flag.store(energy.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
         prefill.push_back(frame.clone());
         while prefill.len() > cfg.prefill_frames + 1 {
@@ -157,6 +162,7 @@ async fn run_passthrough(
     cfg: VadConfig,
     on_segment: UnboundedSender<Segment>,
     recording: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    energy_flag: std::sync::Arc<std::sync::atomic::AtomicU32>,
 ) -> Result<()> {
     let mut speech_buffer: Vec<f32> = Vec::new();
     let mut speech_ms = 0_u64;
@@ -164,8 +170,12 @@ async fn run_passthrough(
         if !recording.load(std::sync::atomic::Ordering::Relaxed) {
             speech_buffer.clear();
             speech_ms = 0;
+            energy_flag.store(0u32, std::sync::atomic::Ordering::Relaxed);
             continue;
         }
+
+        let energy = calculate_energy(&frame);
+        energy_flag.store(energy.to_bits(), std::sync::atomic::Ordering::Relaxed);
 
         speech_buffer.extend_from_slice(&frame);
         speech_ms += cfg.frame_ms as u64;
@@ -178,6 +188,14 @@ async fn run_passthrough(
         }
     }
     Ok(())
+}
+
+fn calculate_energy(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|&s| s * s).sum();
+    (sum_sq / samples.len() as f32).sqrt()
 }
 
 fn ensure_vad_model(path: &Path, url: Option<&str>) -> Result<()> {

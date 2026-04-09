@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -48,6 +48,7 @@ pub async fn run(config: Config, socket_path: PathBuf, config_path: PathBuf) -> 
     let runtime_config = Arc::new(RwLock::new(config.clone()));
     let history = Arc::new(Mutex::new(VecDeque::<HistoryEntry>::new()));
     let recording_flag = Arc::new(AtomicBool::new(false));
+    let energy_flag = Arc::new(AtomicU32::new(0u32));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
@@ -81,9 +82,10 @@ pub async fn run(config: Config, socket_path: PathBuf, config_path: PathBuf) -> 
 
     tokio::spawn({
         let recording_flag = Arc::clone(&recording_flag);
+        let energy_flag = Arc::clone(&energy_flag);
         async move {
             if let Err(err) =
-                vad::run_segmenter(audio_rx, vad_cfg, segment_tx, recording_flag).await
+                vad::run_segmenter(audio_rx, vad_cfg, segment_tx, recording_flag, energy_flag).await
             {
                 eprintln!("VAD error: {err:#}");
             }
@@ -157,6 +159,7 @@ pub async fn run(config: Config, socket_path: PathBuf, config_path: PathBuf) -> 
                 let history = Arc::clone(&history);
                 let recording_flag = Arc::clone(&recording_flag);
                 let shutdown_tx = shutdown_tx.clone();
+                let energy_flag = Arc::clone(&energy_flag);
                 tokio::spawn(async move {
                     if let Err(err) = handle_client(
                         stream,
@@ -165,6 +168,7 @@ pub async fn run(config: Config, socket_path: PathBuf, config_path: PathBuf) -> 
                         runtime_config,
                         history,
                         recording_flag,
+                        energy_flag,
                         shutdown_tx,
                     ).await {
                         eprintln!("client error: {err:#}");
@@ -223,6 +227,7 @@ async fn handle_client(
     runtime_config: Arc<RwLock<Config>>,
     history: Arc<Mutex<VecDeque<HistoryEntry>>>,
     recording_flag: Arc<AtomicBool>,
+    energy_flag: Arc<AtomicU32>,
     shutdown_tx: watch::Sender<bool>,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
@@ -236,6 +241,7 @@ async fn handle_client(
             &runtime_config,
             &history,
             &recording_flag,
+            &energy_flag,
             &shutdown_tx,
         )
         .await?;
@@ -251,6 +257,7 @@ async fn handle_command(
     runtime_config: &Arc<RwLock<Config>>,
     history: &Arc<Mutex<VecDeque<HistoryEntry>>>,
     recording_flag: &Arc<AtomicBool>,
+    energy_flag: &Arc<AtomicU32>,
     shutdown_tx: &watch::Sender<bool>,
 ) -> Result<String> {
     let Some(request) = Request::parse_legacy(line.trim()) else {
@@ -281,7 +288,11 @@ async fn handle_command(
         }
         Request::Status => {
             let state = state.lock().await;
-            Ok(format!("OK recording={}", state.recording))
+            let energy = f32::from_bits(energy_flag.load(Ordering::Relaxed));
+            Ok(format!(
+                "OK recording={} energy={:.4}",
+                state.recording, energy
+            ))
         }
         Request::Shutdown => {
             let _ = shutdown_tx.send(true);

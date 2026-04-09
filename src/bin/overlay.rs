@@ -96,18 +96,24 @@ fn daemonize(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn read_status(socket: &PathBuf) -> bool {
+fn read_status(socket: &PathBuf) -> (bool, f32) {
     match std::os::unix::net::UnixStream::connect(socket) {
         Ok(mut stream) => {
             let _ = stream.write_all(b"STATUS\n");
             let mut buf = String::new();
             let _ = std::io::Read::read_to_string(&mut stream, &mut buf);
-            eprintln!("overlay: status response='{}'", buf.trim());
-            buf.contains("recording=true")
+            let recording = buf.contains("recording=true");
+            let energy = buf
+                .split("energy=")
+                .last()
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(0.0);
+            (recording, energy)
         }
         Err(err) => {
             eprintln!("overlay: status read failed: {err}");
-            false
+            (false, 0.0)
         }
     }
 }
@@ -175,35 +181,66 @@ drawingarea.voice-cmd-overlay {
         container.set_hexpand(true);
         container.set_vexpand(false);
 
-        let circle = gtk::DrawingArea::new();
-        circle.add_css_class("voice-cmd-overlay");
-        circle.set_content_width(48);
-        circle.set_content_height(48);
-        circle.set_draw_func(|_, cr, width, height| {
-            let radius = (width.min(height) as f64) / 2.0 - 1.0;
-            cr.set_source_rgba(1.0, 0.15, 0.15, 0.45);
-            cr.arc(
-                width as f64 / 2.0,
-                height as f64 / 2.0,
-                radius,
-                0.0,
-                std::f64::consts::TAU,
-            );
+        let waveform_area = gtk::DrawingArea::new();
+        waveform_area.add_css_class("voice-cmd-overlay");
+        waveform_area.set_content_width(120);
+        waveform_area.set_content_height(48);
+
+        let energy_history = std::sync::Arc::new(std::sync::Mutex::new(vec![0.0f32; 7]));
+
+        let history_ptr = energy_history.clone();
+        waveform_area.set_draw_func(move |_, cr, width, height| {
+            let w = width as f64;
+            let h = height as f64;
+
+            // Draw pill background
+            let radius = h / 2.0;
+            cr.set_source_rgba(0.1, 0.1, 0.1, 0.7);
+            cr.new_sub_path();
+            cr.arc(radius, radius, radius, 0.5 * std::f64::consts::PI, 1.5 * std::f64::consts::PI);
+            cr.arc(w - radius, radius, radius, 1.5 * std::f64::consts::PI, 0.5 * std::f64::consts::PI);
+            cr.close_path();
             let _ = cr.fill();
 
-            cr.set_source_rgba(1.0, 0.4, 0.4, 0.7);
+            // Draw pill border
+            cr.set_source_rgba(1.0, 0.2, 0.2, 0.8);
             cr.set_line_width(2.0);
-            cr.arc(
-                width as f64 / 2.0,
-                height as f64 / 2.0,
-                radius,
-                0.0,
-                std::f64::consts::TAU,
-            );
+            cr.new_sub_path();
+            cr.arc(radius, radius, radius, 0.5 * std::f64::consts::PI, 1.5 * std::f64::consts::PI);
+            cr.arc(w - radius, radius, radius, 1.5 * std::f64::consts::PI, 0.5 * std::f64::consts::PI);
+            cr.close_path();
             let _ = cr.stroke();
+
+            // Draw bars
+            let history = history_ptr.lock().unwrap();
+            let num_bars = history.len();
+            let bar_spacing = 6.0;
+            let bar_width = 4.0;
+            let total_bars_width = (num_bars as f64 * bar_width) + ((num_bars - 1) as f64 * bar_spacing);
+            let start_x = (w - total_bars_width) / 2.0;
+
+            for (i, &energy) in history.iter().enumerate() {
+                let x = start_x + (i as f64 * (bar_width + bar_spacing));
+                // Scale energy for visibility. RMS is typically small.
+                let min_height = 4.0;
+                let max_height = h - 16.0;
+                let bar_h = (min_height + (energy as f64 * 150.0) * max_height).min(max_height);
+                let y = (h - bar_h) / 2.0;
+
+                cr.set_source_rgba(1.0, 0.3, 0.3, 0.9);
+                // Rounded rectangle for each bar
+                let r = bar_width / 2.0;
+                cr.new_sub_path();
+                cr.arc(x + r, y + r, r, std::f64::consts::PI, 1.5 * std::f64::consts::PI);
+                cr.arc(x + bar_width - r, y + r, r, 1.5 * std::f64::consts::PI, 2.0 * std::f64::consts::PI);
+                cr.arc(x + bar_width - r, y + bar_h - r, r, 0.0, 0.5 * std::f64::consts::PI);
+                cr.arc(x + r, y + bar_h - r, r, 0.5 * std::f64::consts::PI, std::f64::consts::PI);
+                cr.close_path();
+                let _ = cr.fill();
+            }
         });
 
-        container.append(&circle);
+        container.append(&waveform_area);
         window.set_child(Some(&container));
         window.show();
         eprintln!("overlay: window initialized and shown once");
@@ -211,12 +248,20 @@ drawingarea.voice-cmd-overlay {
         let socket_path = socket_path.clone();
         let window = window.clone();
         let mut last_recording = true;
-        glib::timeout_add_local(Duration::from_millis(250), move || {
-            let recording = read_status(&socket_path);
+        glib::timeout_add_local(Duration::from_millis(50), move || {
+            let (recording, energy) = read_status(&socket_path);
             if recording != last_recording {
                 eprintln!("overlay: recording state changed -> {recording}");
                 last_recording = recording;
             }
+
+            {
+                let mut history = energy_history.lock().unwrap();
+                history.remove(0);
+                history.push(energy);
+            }
+            waveform_area.queue_draw();
+
             if recording {
                 window.show();
             } else {
